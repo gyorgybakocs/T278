@@ -1,0 +1,20 @@
+{{- if .Values.redis.enabled -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-config
+  labels:
+    {{- include "tis-stack.labels" . | nindent 4 }}
+data:
+  REDIS_REPOSITORY: {{ .Values.redis.image.repository | quote }}
+  REDIS_IMAGE: {{ .Values.redis.image.originalName | quote }}
+  REDIS_VERSION: {{ .Values.global.versions.redis | quote }}
+  REDIS_BUILT_IMAGE: "{{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }}"
+  REDIS_SERVICE: "redis"
+  REDIS_HOST: "redis"
+  REDIS_PORT: {{ .Values.redis.service.port | quote }}
+  REDIS_REDIRECT_PORT: {{ .Values.redis.service.redirectPort | quote }}
+  REDIS_MAXMEMORY: {{ .Values.redis.config.maxmemory | quote }}
+  REDIS_MAXMEMORY_POLICY: {{ .Values.redis.config.maxmemoryPolicy | quote }}
+  REDIS_APPENDONLY: {{ .Values.redis.config.appendonly  | quote }}
+{{- end }}

@@ -1,0 +1,60 @@
+{{- if and .Values.redis.enabled (not .Values.global.onlyConfig) -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "tis-stack.fullname" . }}-redis
+  labels:
+    {{- include "tis-stack.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "tis-stack.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: redis
+  template:
+    metadata:
+      labels:
+        {{- include "tis-stack.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: redis
+    spec:
+      containers:
+        - name: redis
+          image: "{{ .Values.global.registry }}/{{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          args:
+            - redis-server
+            - /etc/redis/redis.conf
+            - --requirepass
+            - $(REDIS_PASSWORD)
+          ports:
+            - containerPort: 6379
+              name: redis
+
+          envFrom:
+            - configMapRef:
+                name: redis-config
+
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: tis-app-secrets
+                  key: redis-password
+
+          resources:
+            requests:
+              memory: {{ .Values.redis.resources.requests.memory }}
+              cpu: {{ .Values.redis.resources.requests.cpu }}
+            limits:
+              memory: {{ .Values.redis.resources.limits.memory }}
+              cpu: {{ .Values.redis.resources.limits.cpu }}
+
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+
+      volumes:
+        - name: redis-data
+          persistentVolumeClaim:
+            claimName: {{ include "tis-stack.fullname" . }}-redis-pvc
+{{- end }}

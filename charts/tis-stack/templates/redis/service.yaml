@@ -1,0 +1,18 @@
+{{- if and .Values.redis.enabled (not .Values.global.onlyConfig) -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis # Hardcoded to match legacy expectations if needed, or use "include"
+  labels:
+    {{- include "tis-stack.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: 6379
+      targetPort: 6379
+      protocol: TCP
+      name: redis
+  selector:
+    {{- include "tis-stack.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+{{- end }}

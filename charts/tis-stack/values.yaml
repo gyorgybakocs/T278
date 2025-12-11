@@ -1,0 +1,50 @@
+global:
+  onlyConfig: false
+  registry: "localhost:5000"
+  imagePullPolicy: IfNotPresent
+  storageClass: "standard"
+
+  aws:
+    region: "eu-central-1"
+    ecrRegistryUrl: "548858542119.dkr.ecr.eu-central-1.amazonaws.com"
+    accessKeyId: ""
+    secretAccessKey: ""
+
+  envTag: "prd"
+  imgPrefix: "tis"
+
+  versions:
+    redis: "tis-1.0.0"
+
+redis:
+  enabled: true
+  name: redis
+  image:
+    repository: "redis/redis"
+    tag: "built"
+    originalName: "ai-redis"
+  
+  service:
+    port: 6379
+    redirectPort: 6380
+
+  auth:
+    password: "" # Set via --set redis.auth.password=XYZ
+
+  resources:
+    requests:
+      memory: "64Mi"
+      cpu: "50m"
+    limits:
+      memory: "256Mi"
+      cpu: "500m"
+
+  persistence:
+    enabled: true
+    size: 1Gi
+    accessMode: ReadWriteOnce
+
+  config:
+    maxmemory: "200mb"
+    maxmemoryPolicy: "allkeys-lru"
+    appendonly: "yes"
