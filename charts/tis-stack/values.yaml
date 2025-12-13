@@ -1,18 +1,34 @@
 global:
+  # FLAG:
+  #   Controls the deployment mode.
+  #   If true: Only ConfigMaps and Secrets are deployed (useful for CI/CD preparation).
+  #   If false: The full stack (Deployments, StatefulSets) is rolled out.
   onlyConfig: false
+
+  # REGISTRY:
+  #   Points to the local registry in the development environment (Minikube).
+  #   In production, this is overridden by the AWS ECR URL.
   registry: "localhost:5000"
   imagePullPolicy: Always
   storageClass: "standard"
 
   aws:
+    # REGION:
+    #   Defines the target AWS region for ECR pulls and potentially S3 backups.
     region: "eu-central-1"
     ecrRegistryUrl: "548858542119.dkr.ecr.eu-central-1.amazonaws.com"
+    # SECURITY:
+    #   Credentials should be injected via --set arguments or external secrets,
+    #   never committed here. These empty strings are placeholders.
     accessKeyId: ""
     secretAccessKey: ""
 
   envTag: "prd"
   imgPrefix: "tis"
 
+  # VERSIONING:
+  #   Centralized version locking for the entire stack.
+  #   Ensures that Coordinator and Worker nodes always run the exact same binary.
   versions:
     postgres: "tis-1.0.0"
     redis: "tis-1.0.0"
@@ -23,9 +39,15 @@ postgres:
   name: postgres
   image:
     repository: "citus/citus"
+    # BUILD TAG:
+    #   'built' indicates a locally patched image (with custom scripts).
+    #   'originalName' tracks the upstream source for transparency.
     tag: "built"
     originalName: "citusdata/citus:13.2-pg16"
 
+  # DATABASES:
+  #   List of databases to be created automatically by the init script.
+  #   Adding a name here ensures the Citus extension is enabled for it at startup.
   databases:
     - langflow_db
     - app_db
@@ -34,14 +56,23 @@ postgres:
 
   service:
     port: 5432
+    # LOCAL ACCESS:
+    #   'redirectPort' (5433) is used for port-forwarding to avoid conflicts
+    #   if a local Postgres instance is already running on port 5432.
     redirectPort: 5433
 
   auth:
     username: "postgres_user"
     database: "langflow_db"
-    password: "" # Must be present (empty) for 'required' check in secrets.yaml
+    # SECURITY:
+    #   Must remain empty in git. The actual password is strictly required
+    #   and must be provided via the secrets.yaml / Helm --set command.
+    password: ""
 
   podSecurityContext:
+    # PERMISSIONS:
+    #   Runs as a non-root user (999 is the standard postgres uid)
+    #   to mitigate potential container breakout risks.
     fsGroup: 999
     runAsUser: 999
     runAsGroup: 999
@@ -49,6 +80,9 @@ postgres:
   # Coordinator Node (Single Deployment)
   coordinator:
     resources:
+      # CAPACITY:
+      #   The Coordinator handles query planning and aggregation.
+      #   It needs more CPU than memory compared to workers.
       requests:
         memory: "1Gi"
         cpu: "500m"
@@ -60,8 +94,14 @@ postgres:
 
   # Worker Nodes (StatefulSet)
   worker:
-    replicas: 3 # Initial number of workers (dynamically updated by scripts)
+    # SCALING:
+    #   Initial worker count. This can be scaled up, but scaling down
+    #   requires careful data rebalancing (shard movement).
+    replicas: 3
     resources:
+      # CAPACITY:
+      #   Workers handle the actual data storage and compute.
+      #   They require significant memory for caching (Shared Buffers).
       requests:
         memory: "2Gi"
         cpu: "1000m"
@@ -73,12 +113,29 @@ postgres:
 
   # Tuning Variables (Injected into postgresql.conf via entrypoint)
   config:
+    # CONNECTIONS:
+    #   Limits concurrent connections to prevent connection storms.
+    #   If this limit is reached, a connection pooler (PgBouncer) is recommended.
     max_connections: 150
+
+    # CITUS:
+    #   Must be at least equal to max_connections to support distributed transactions.
     max_prepared_transactions: 150
+
+    # MEMORY TUNING:
+    #   shared_buffers: Dedicated memory for Postgres caching (typ. 25% of RAM).
+    #   effective_cache_size: Hint to the query planner about available OS cache (typ. 50-75% of RAM).
     shared_buffers: "128MB"
     effective_cache_size: "512MB"
+
+    # QUERY MEMORY:
+    #   Memory per operation (sort/hash). Keeping this low (4MB) prevents OOM
+    #   when many complex queries run in parallel.
     work_mem: "4MB"
     maintenance_work_mem: "64MB"
+
+    # PARALLELISM:
+    #   Limits how many CPU cores a single query can utilize.
     max_worker_processes: 8
     max_parallel_workers: 8
 
@@ -90,15 +147,20 @@ redis:
     repository: "redis/redis"
     tag: "built"
     originalName: "ai-redis"
-  
+
   service:
     port: 6379
     redirectPort: 6380
 
   auth:
-    password: "" # Set via --set redis.auth.password=XYZ
+    # SECURITY:
+    #   Empty by default; enforced via secrets.yaml.
+    password: ""
 
   resources:
+    # STABILITY:
+    #   Redis is sensitive to memory pressure.
+    #   Requests are set low to allow scheduling, but Limits cap the usage.
     requests:
       memory: "64Mi"
       cpu: "50m"
@@ -112,6 +174,10 @@ redis:
     accessMode: ReadWriteOnce
 
   config:
+    # EVICTION:
+    #   'allkeys-lru' ensures that when memory is full (200mb),
+    #   the least recently used keys are removed to accept new writes.
+    #   Critical for using Redis as a cache rather than a permanent store.
     maxmemory: "200mb"
     maxmemoryPolicy: "allkeys-lru"
     appendonly: "yes"

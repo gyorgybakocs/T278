@@ -7,10 +7,24 @@ metadata:
     {{- include "tis-stack.labels" . | nindent 4 }}
     app.kubernetes.io/component: redis
 spec:
+  # ACCESS MODES:
+  #   Typically set to 'ReadWriteOnce' (RWO).
+  #   WHY: Redis is deployed here as a single-replica Deployment (singleton),
+  #   so the volume only needs to be mounted by one node at a time.
+  #   Multi-attach (ReadWriteMany) is not required and often not supported by block storage.
   accessModes:
     - {{ .Values.redis.persistence.accessMode }}
   resources:
     requests:
+      # CAPACITY:
+      #   This reserves physical disk space.
+      #   RISK: If the AOF (Append Only File) grows beyond this limit,
+      #   Redis will panic or stop accepting writes. Monitoring disk usage is essential.
       storage: {{ .Values.redis.persistence.size }}
+
+  # ABSTRACTION:
+  #   'storageClassName' decouples the request from the physical provider.
+  #   It allows this chart to work on AWS (gp2/gp3), Google Cloud (pd-standard),
+  #   or Minikube (standard) without changing the manifest code.
   storageClassName: {{ .Values.global.storageClass }}
 {{- end }}

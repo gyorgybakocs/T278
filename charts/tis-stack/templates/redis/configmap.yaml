@@ -6,15 +6,44 @@ metadata:
   labels:
     {{- include "tis-stack.labels" . | nindent 4 }}
 data:
+  # PURPOSE:
+  #   Defines the image repository and tag explicitly.
+  #   This decouples the runtime configuration from the specific container runtime defaults.
   REDIS_REPOSITORY: {{ .Values.redis.image.repository | quote }}
   REDIS_IMAGE: {{ .Values.redis.image.originalName | quote }}
+
+  # VERSIONING:
+  #   Injects the global stack version. This is critical for ensuring
+  #   compatibility between the application logic and the Redis data structures.
   REDIS_VERSION: {{ .Values.global.versions.redis | quote }}
+
+  # BUILD ARTIFACT:
+  #   Constructs the full image reference used by local builds (Kaniko).
+  #   It combines the repository and the tag to form a complete locator.
   REDIS_BUILT_IMAGE: "{{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }}"
+
+  # NETWORKING:
+  #   Service discovery names used by other components to reach Redis.
+  #   'redis' is the stable DNS name provided by the Kubernetes Service.
   REDIS_SERVICE: "redis"
   REDIS_HOST: "redis"
+
+  # PORTS:
+  #   REDIS_PORT: The standard port (6379) for internal cluster traffic.
+  #   REDIS_REDIRECT_PORT: A specific port (6380) used for localhost port-forwarding
+  #   or debugging scenarios, avoiding conflicts with local Redis instances.
   REDIS_PORT: {{ .Values.redis.service.port | quote }}
   REDIS_REDIRECT_PORT: {{ .Values.redis.service.redirectPort | quote }}
+
+  # TUNING:
+  #   Memory limits and eviction policies are injected here.
+  #   These values control how Redis behaves under memory pressure,
+  #   preventing it from crashing the pod due to OOM (Out Of Memory).
   REDIS_MAXMEMORY: {{ .Values.redis.config.maxmemory | quote }}
   REDIS_MAXMEMORY_POLICY: {{ .Values.redis.config.maxmemoryPolicy | quote }}
+
+  # PERSISTENCE:
+  #   Controls the Append Only File (AOF) setting.
+  #   'yes' ensures higher data durability at the cost of slightly higher I/O.
   REDIS_APPENDONLY: {{ .Values.redis.config.appendonly  | quote }}
 {{- end }}

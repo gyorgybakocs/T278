@@ -5,8 +5,22 @@ metadata:
   labels:
     {{- include "tis-stack.labels" . | nindent 4 }}
 data:
+  # CLOUD CONTEXT:
+  #   These variables are injected into every container to ensure they all talk
+  #   to the same AWS services in the same region.
+  #   PREVENTION: This avoids "split-brain" scenarios where some services might
+  #   try to pull images from a different region or registry.
   AWS_DEFAULT_REGION: {{ .Values.global.aws.region | quote }}
   AWS_ECR_REGISTRY_URL: {{ .Values.global.aws.ecrRegistryUrl | quote }}
+
+  # ARTIFACT NAMING:
+  #   'IMG_PREFIX' and 'ENV_TAG' are used to construct standard image names.
+  #   This standardizes the build pipeline output and runtime expectations.
   IMG_PREFIX: {{ .Values.global.imgPrefix | quote }}
   ENV_TAG: {{ .Values.global.envTag | quote }}
+
+  # BRANCH LOCKING:
+  #   Hardcoded to "master".
+  #   RISK: This implies that this stack is strictly designed for production/mainline deployment.
+  #   For feature branch deployments, this value should ideally be dynamic (templatized).
   BITBUCKET_BRANCH: "master"

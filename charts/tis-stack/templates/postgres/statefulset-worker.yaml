@@ -7,8 +7,18 @@ metadata:
     {{- include "tis-stack.labels" . | nindent 4 }}
     app.kubernetes.io/component: postgres-worker
 spec:
-  # Connects to the Headless Service for stable network identities (DNS)
+  # NETWORK IDENTITY:
+  #   Points to the Headless Service created previously.
+  #   WHY: This generates stable DNS names for each pod (e.g., worker-0, worker-1).
+  #   The Coordinator relies on these fixed names to register the nodes.
+  #   If we used a Deployment, pod names would be random hashes, breaking registration after restarts.
   serviceName: "postgres-worker-headless"
+
+  # SCALING:
+  #   Defined in values.yaml (default: 3).
+  #   RISK: Scaling down (reducing replicas) is DESTRUCTIVE in Citus.
+  #   It requires manually moving shards off the node before deletion,
+  #   otherwise data is lost. Automatic scaling is not safe here.
   replicas: {{ .Values.postgres.worker.replicas }}
   selector:
     matchLabels:
@@ -40,17 +50,23 @@ spec:
                   name: tis-app-secrets
                   key: postgres-password
 
-            # --- FIX: USE SUBDIRECTORY FOR DATA ---
-            # Prevents "Operation not permitted" on PVC root
+            # DATA INTEGRITY:
+            #   Using a subdirectory fixes "Permission Denied" errors on some cloud providers (e.g., AWS EBS),
+            #   where the persistent volume root is owned by root, but Postgres runs as uid 999.
+            #   The 'lost+found' directory at root can also cause initdb failures.
             - name: PGDATA
               value: /var/lib/postgresql/data/pgdata
 
-            # --- Citus Logic ---
-            # Workers are passive nodes, they do NOT register others.
+            # ROLE DEFINITION:
+            #   We explicitly set this to "0".
+            #   WHY: Worker nodes are passive participants. They do not run the registration logic
+            #   or wait for other nodes. They simply start up and wait to be called by the Coordinator.
             - name: PG_WORKER_REPLICAS
               value: "0"
 
-            # Resource Config (Same as coordinator, utilizing values from config section)
+            # RESOURCE TUNING:
+            #   Workers share the same tuning configs as the coordinator (from ConfigMap),
+            #   but they are the ones actually using the memory for large joins/aggregations.
             - name: PG_MAX_CONNECTIONS
               value: {{ .Values.postgres.config.max_connections | quote }}
             - name: PG_SHARED_BUFFERS
@@ -79,7 +95,10 @@ spec:
             - name: data
               mountPath: /var/lib/postgresql/data
 
-  # Dynamic Volume Provisioning: Creates a unique PVC for each worker pod automatically
+  # STORAGE:
+  #   'volumeClaimTemplates' dynamically creates a unique PersistentVolumeClaim (PVC)
+  #   for EACH replica (data-worker-0, data-worker-1, etc.).
+  #   This ensures that if a pod crashes and reschedules, it reattaches to ITS OWN specific data.
   volumeClaimTemplates:
     - metadata:
         name: data

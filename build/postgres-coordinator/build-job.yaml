@@ -4,24 +4,40 @@ metadata:
   name: postgres-coordinator-build
   namespace: default
 spec:
-  backoffLimit: 0
+  # PURPOSE:
+  #   This Job builds the Docker image for the Postgres Coordinator node.
+  #   The Coordinator is the primary entry point for all SQL queries in the Citus cluster.
+
+  # WHY:
+  #   Decoupling the build process into a Kubernetes Job allows for reproducible builds
+  #   that are independent of the developer's local environment or specific CI/CD runners.
+  backoffLimit: 0 # Fail fast policy: if the build fails, do not retry blindly.
   completions: 1
   parallelism: 1
   template:
     spec:
       containers:
         - name: kaniko
+          # USAGE:
+          #   Kaniko executes the build inside the cluster without requiring a Docker daemon.
           image: gcr.io/kaniko-project/executor:latest
           args:
             - --force
             - --context=/workspace
+            # REUSE:
+            #   Uses the shared 'docker/postgres/Dockerfile'. The distinction between
+            #   Coordinator and Worker is handled largely at runtime configuration,
+            #   not at the image level, simplifying maintenance.
             - --dockerfile=docker/postgres/Dockerfile
             - --destination=$(REGISTRY_URL)/$(POSTGRES_BUILT_IMAGE)
             - --build-arg=POSTGRES_PORT=$(POSTGRES_PORT)
             - --build-arg=IMAGE_FROM_REGISTRY=$(REGISTRY_URL)/$(POSTGRES_BUILT_IMAGE)
-            - --insecure
+            - --insecure # Required for the internal, self-hosted registry without TLS.
             - --skip-tls-verify
           securityContext:
+            # RISKS:
+            #   Privileged access is strictly required for Kaniko to perform
+            #   filesystem snapshots and layer caching.
             runAsUser: 0
             privileged: true
           volumeMounts:
@@ -29,6 +45,9 @@ spec:
               mountPath: /workspace
           workingDir: /workspace
           envFrom:
+            # CONFIGURATION:
+            #   Injects build-time variables (versions, tags) from the 'postgres-config' ConfigMap.
+            #   This guarantees that the built image matches the expected runtime version.
             - configMapRef:
                 name: postgres-config
           env:
@@ -43,5 +62,9 @@ spec:
       volumes:
         - name: workspace
           hostPath:
+            # CONSTRAINT:
+            #   Relies on the local host filesystem mapping. This assumes a single-node
+            #   setup (like Minikube) or that the build job lands on the specific node
+            #   where code is present.
             path: /workspace
             type: Directory

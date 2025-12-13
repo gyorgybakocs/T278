@@ -8,6 +8,9 @@ echo "==========================================================="
 # ==============================================================================
 # 1. HARDWARE DETECTION
 # ==============================================================================
+# PURPOSE:
+#   Detects the total physical RAM available on the host machine.
+#   Supports both macOS (Darwin) and Linux (standard /proc/meminfo).
 if [ "$(uname)" == "Darwin" ]; then
     TOTAL_MEM_BYTES=$(sysctl -n hw.memsize)
     TOTAL_MEM_MB=$((TOTAL_MEM_BYTES / 1024 / 1024))
@@ -22,7 +25,10 @@ echo "   -> Host Hardware: ${TOTAL_MEM_MB} MB RAM"
 # 2. HELPER FUNCTIONS
 # ==============================================================================
 
-# Calculates percentage of total RAM
+# LOGIC:
+#   Calculates a percentage of total RAM, ensuring a safe floor value.
+#   WHY: Redis needs a minimum amount of memory to boot and function correctly,
+#   even on very small nodes.
 calc_ram_percent() {
     local percent=$1
     local val=$((TOTAL_MEM_MB * percent / 100))
@@ -39,10 +45,16 @@ configure_redis() {
     echo "🔧 Configuring Component: REDIS"
     echo "-----------------------------------------------------------"
 
-    # Logic: Redis gets ~2% of Total RAM for caching
+    # STRATEGY:
+    #   Allocates ~2% of host RAM to Redis.
+    #   TRADE-OFF: This is a conservative estimate for a sidecar/cache role.
+    #   For a dedicated Redis cluster, this should be much higher.
     local redis_mem_mb=$(calc_ram_percent 2)
 
-    # For DBs, Request should equal Limit (Guaranteed QoS) to prevent OOM Kills
+    # QOS GUARANTEE:
+    #   Sets Request = Limit.
+    #   WHY: This places the Pod in the 'Guaranteed' QoS class in Kubernetes,
+    #   protecting it from being evicted first during node memory pressure.
     local redis_req_mb=$redis_mem_mb
     local redis_lim_mb=$redis_mem_mb
 
@@ -58,6 +70,9 @@ configure_redis() {
 
     echo "   -> Applying via Helm..."
 
+    # AUTOMATION:
+    #   Updates the deployed Helm release in-place with the calculated values.
+    #   '--reuse-values' preserves other settings (like passwords/images).
     helm upgrade tis-stack ./charts/tis-stack \
         --namespace default \
         --reuse-values \

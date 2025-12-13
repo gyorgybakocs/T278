@@ -8,6 +8,9 @@ test_gunicorn() {
     echo "🧪 GUNICORN VALIDATION TEST"
     echo "==============================================="
 
+    # PURPOSE:
+    #   Dynamically locate the target pod to avoid hardcoding specific pod hashes,
+    #   which change with every deployment or restart.
     local langflow_pod=$(get_latest_pod "langflow")
 
     if [ -z "$langflow_pod" ]; then
@@ -19,6 +22,12 @@ test_gunicorn() {
     echo "-----------------------------------------------"
 
     # Proof #1
+    # INTENT:
+    #   Verify application startup success by scanning standard output for the specific
+    #   initialization signature of Gunicorn.
+    # TRADE-OFF:
+    #   Log scraping is brittle; if the Gunicorn configuration changes logging format
+    #   or verbosity, this check might yield false negatives.
     if kubectl logs "$langflow_pod" 2>&1 | grep -q "Starting gunicorn"; then
         echo "✅ PROOF: Found 'Starting gunicorn' in logs."
     else
@@ -27,6 +36,9 @@ test_gunicorn() {
 
     # Proof #2
     echo "Checking process tree inside container..."
+    # WHY:
+    #   The log check proves it *started*, but this process check proves it is
+    #   *currently running*. This handles cases where the app crashed immediately after start.
     kubectl exec "$langflow_pod" -- /bin/sh -c 'ps aux | grep gunicorn'
 
     echo "==============================================="

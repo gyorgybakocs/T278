@@ -1,6 +1,9 @@
 #!/bin/bash
 
 # Import helpers
+# ROBUSTNESS:
+#   Using "$(dirname "${BASH_SOURCE[0]}")" allows the script to be run from anywhere
+#   (e.g., ./scripts/test-citus.sh or just ./test-citus.sh), maintaining the relative path to helpers.sh.
 source "$(dirname "${BASH_SOURCE[0]}")/helpers.sh"
 
 test_citus() {
@@ -8,6 +11,9 @@ test_citus() {
     echo "🧪 TESTING CITUS SHARDING & DISTRIBUTION"
     echo "==============================================="
 
+    # DISCOVERY:
+    #   Uses the function defined in 'helpers.sh' to find the actual pod name.
+    #   Crucial because the pod name changes with every deployment/restart.
     local pg_pod=$(get_latest_pod "postgres-coordinator")
 
     if [ -z "$pg_pod" ]; then
@@ -19,11 +25,18 @@ test_citus() {
     echo "-----------------------------------------------"
 
     # Helper function for running SQL inside the pod
+    # SECURITY & AUTOMATION:
+    #   - We inject the password env var directly into the bash command inside the container.
+    #   - We target 'langflow_db' specifically, assuming that's the main app DB.
+    #   - '-tA': Tuples only (no headers) and unaligned, making parsing easier in bash.
     run_sql() {
         kubectl exec "$pg_pod" -- bash -c "export PGPASSWORD=\"\$POSTGRES_PASSWORD\"; psql -U \"\$POSTGRES_USER\" -d langflow_db -tA -c \"$1\""
     }
 
     echo -n "1️⃣  Checking Citus Extension... "
+    # HEALTH CHECK:
+    #   Simple query to verify if the extension is loaded in shared_preload_libraries
+    #   and installed in the database.
     local version=$(run_sql "SELECT citus_version();")
     if [[ $version == *"Citus"* ]]; then
         echo "✅ OK ($version)"
@@ -35,8 +48,9 @@ test_citus() {
     echo "-----------------------------------------------"
     echo "2️⃣  Verifying Distributed Tables (Sharding)"
 
-    # Check specifically for expected distributed tables.
-    # Since we haven't distributed them yet in init, this might return empty, which is expected at this stage unless initialized manually.
+    # INTROSPECTION:
+    #   Queries metadata to see if any tables have actually been distributed (sharded).
+    #   This helps distinguish between a "running Citus node" and a "sharded application".
     local dist_tables=$(run_sql "SELECT table_name || ' (' || distribution_column || ')' FROM citus_tables;")
 
     echo "   Found distributed tables:"
@@ -48,6 +62,9 @@ test_citus() {
 
     echo "-----------------------------------------------"
     echo "3️⃣  Checking Active Workers"
+    # CLUSTER HEALTH:
+    #   'master_get_active_worker_nodes()' is the source of truth.
+    #   It confirms that the workers are not just defined in metadata, but are actually REACHABLE and healthy.
     local worker_count=$(run_sql "SELECT count(*) FROM master_get_active_worker_nodes();")
 
     echo "   -> Active Workers found: $worker_count"
@@ -65,6 +82,9 @@ test_citus() {
 }
 
 # Execute if run as a script
+# MODULARITY:
+#   Allows this file to be sourced by other scripts (like a main 'test-all.sh') without executing immediately,
+#   OR run standalone as an executable.
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     set -e
     test_citus

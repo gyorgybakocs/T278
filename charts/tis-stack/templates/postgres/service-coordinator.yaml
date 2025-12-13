@@ -2,17 +2,29 @@
 apiVersion: v1
 kind: Service
 metadata:
+  # NAMING:
+  #   Hardcoded to 'postgres-coordinator'.
+  #   WHY: This creates a predictable DNS entry (e.g., 'postgres-coordinator.default.svc...').
+  #   Applications must connect ONLY to this host, never to the workers directly.
   name: postgres-coordinator
   labels:
     {{- include "tis-stack.labels" . | nindent 4 }}
 spec:
+  # VISIBILITY:
+  #   ClusterIP ensures the database is only accessible from within the cluster.
+  #   External access should be managed via Ingress or port-forwarding for security.
   type: ClusterIP
   ports:
     - port: {{ .Values.postgres.service.port }}
+      # MAPPING:
+      #   Standard Postgres port 5432 inside the container.
       targetPort: 5432
       protocol: TCP
       name: postgres
   selector:
+    # ROUTING:
+    #   Strictly selects only pods labeled with 'component: postgres-coordinator'.
+    #   This ensures traffic intended for the coordinator never accidentally lands on a worker node.
     {{- include "tis-stack.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: postgres-coordinator
 {{- end }}

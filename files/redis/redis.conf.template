@@ -1,11 +1,39 @@
+# ---------- NETWORK ----------
+# VISIBILITY:
+#   Binds to all network interfaces.
+#   WHY: In a containerized environment (Docker/K8s), the Pod IP is dynamic.
+#   Binding to specific IPs is impractical. We rely on the container runtime's network isolation.
 bind 0.0.0.0
+
+# SECURITY:
+#   Disables the default local-only protection.
+#   RISK: This is safe ONLY because we enforce 'requirepass' in the deployment command
+#   and use ClusterIP services to restrict access to within the cluster.
 protected-mode no
+
 port 6379
+
+# CONNECTION HANDLING:
+#   'tcp-backlog': Queue size for pending connections. High value (511) helps during connection storms.
+#   'timeout 0': Disables closing idle client connections (keep them open indefinitely).
+#   'tcp-keepalive': Sends ACKs every 300s to detect dead peers (e.g., if a worker node crashes).
 tcp-backlog 511
 timeout 0
 tcp-keepalive 300
 
 # ---------- MEMORY ----------
+# DYNAMIC CONFIGURATION:
+#   These values are injected by 'envsubst' in the entrypoint script.
+#   WHY: Allows us to use the same image for different tiers (dev/prod) with different memory limits.
+#   'maxmemory': Hard cap on memory usage to prevent OOM kills.
 maxmemory ${REDIS_MAXMEMORY}
+
+# EVICTION STRATEGY:
+#   Determines what happens when maxmemory is reached.
+#   Typical value: 'allkeys-lru' (evict least recently used keys to allow new writes).
 maxmemory-policy ${REDIS_MAXMEMORY_POLICY}
+
+# PERSISTENCE:
+#   Controls the Append Only File (AOF) mechanism.
+#   'yes' provides better durability than RDB snapshots but has higher I/O overhead.
 appendonly ${REDIS_APPENDONLY}

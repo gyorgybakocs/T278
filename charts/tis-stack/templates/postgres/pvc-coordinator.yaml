@@ -7,10 +7,21 @@ metadata:
     {{- include "tis-stack.labels" . | nindent 4 }}
     app.kubernetes.io/component: postgres-coordinator
 spec:
+  # ACCESS MODES:
+  #   'ReadWriteOnce' (RWO) means the volume can be mounted by only one node.
+  #   WHY: The Coordinator is a standard Postgres instance in terms of storage engine;
+  #   it does not support concurrent writes from multiple pods to the same data directory.
   accessModes:
     - ReadWriteOnce
   resources:
     requests:
+      # CAPACITY:
+      #   Reserved size for Citus metadata (pg_dist_*) and local reference tables.
+      #   Typically small compared to workers, but essential for cluster state.
       storage: {{ .Values.postgres.coordinator.persistence.size }}
+
+  # ABSTRACTION:
+  #   Uses the global storage class (e.g., gp2, standard) defined in values.yaml.
+  #   This ensures the chart is portable across different cloud providers.
   storageClassName: {{ .Values.global.storageClass }}
 {{- end }}

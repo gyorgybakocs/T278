@@ -6,6 +6,9 @@ metadata:
   labels:
     {{- include "tis-stack.labels" . | nindent 4 }}
 spec:
+  # SCALING:
+  #   We stick to exactly 1 replica because standard Redis is single-threaded
+  #   and not distributed by default. Multi-replica setups would require Sentinel/Cluster mode.
   replicas: 1
   selector:
     matchLabels:
@@ -19,11 +22,19 @@ spec:
     spec:
       containers:
         - name: redis
+          # IMAGE:
+          #   Uses the registry and tag defined in values.yaml.
+          #   This ensures we can rotate images (e.g., for security patches)
+          #   without changing the deployment manifest structure.
           image: "{{ .Values.global.registry }}/{{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }}"
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
           args:
             - redis-server
             - /etc/redis/redis.conf
+            # SECURITY:
+            #   Enforce password authentication at startup.
+            #   We pass the password via CLI arg referencing the env var,
+            #   which is safer than hardcoding it in the config file.
             - --requirepass
             - $(REDIS_PASSWORD)
           ports:
@@ -31,10 +42,15 @@ spec:
               name: redis
 
           envFrom:
+            # CONFIGURATION:
+            #   Loads non-sensitive configs (memory limits, policies) from the ConfigMap.
             - configMapRef:
                 name: redis-config
 
           env:
+            # SECRETS:
+            #   The password is injected securely from a Kubernetes Secret.
+            #   This prevents the actual password string from appearing in plain text in the YAML.
             - name: REDIS_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -42,6 +58,9 @@ spec:
                   key: redis-password
 
           resources:
+            # STABILITY:
+            #   Resource requests guarantee the pod gets scheduled on a node with enough RAM.
+            #   Limits prevent Redis from consuming all node memory if a leak or spike occurs.
             requests:
               memory: {{ .Values.redis.resources.requests.memory }}
               cpu: {{ .Values.redis.resources.requests.cpu }}
@@ -50,6 +69,9 @@ spec:
               cpu: {{ .Values.redis.resources.limits.cpu }}
 
           volumeMounts:
+            # PERSISTENCE:
+            #   Mounts the PVC to /data so that the Append Only File (AOF) is stored on disk.
+            #   This ensures data survives pod restarts.
             - name: redis-data
               mountPath: /data
 

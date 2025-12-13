@@ -7,6 +7,10 @@ metadata:
     {{- include "tis-stack.labels" . | nindent 4 }}
     app.kubernetes.io/component: postgres-coordinator
 spec:
+  # ARCHITECTURE:
+  #   The Coordinator is a singleton (replicas: 1).
+  #   It holds the metadata about where data shards are located on the workers.
+  #   High Availability (HA) for the Coordinator would require Patroni/PgPool, not simple scaling.
   replicas: 1
   selector:
     matchLabels:
@@ -33,6 +37,9 @@ spec:
                 name: global-config
 
           env:
+            # SECURITY:
+            #   We inject the password for both the superuser (POSTGRES_PASSWORD)
+            #   and the client connection (PGPASSWORD) used by local scripts.
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -45,6 +52,9 @@ spec:
                   name: tis-app-secrets
                   key: postgres-password
 
+            # ORCHESTRATION:
+            #   The Coordinator needs to know the name of the Worker StatefulSet
+            #   to construct their DNS names for registration (e.g., worker-0.headless-svc...).
             - name: PG_WORKER_STATEFULSET_NAME
               value: "{{ include "tis-stack.fullname" . }}-postgres-worker"
 
@@ -53,12 +63,20 @@ spec:
                 fieldRef:
                   fieldPath: metadata.namespace
 
+            # DATA LOCATION:
+            #   We use a subdirectory 'pgdata' to avoid permission issues
+            #   often seen when mounting PVC roots directly in some K8s providers.
             - name: PGDATA
               value: /var/lib/postgresql/data/pgdata
 
+            # INITIALIZATION:
+            #   List of databases to create on startup (from values.yaml).
             - name: DB_LIST
               value: "{{ range .Values.postgres.databases }}{{ . }} {{ end }}"
 
+            # TUNING:
+            #   Injecting resource limits directly into the container env,
+            #   which the entrypoint script will write to postgresql.conf.
             - name: PG_MAX_CONNECTIONS
               value: {{ .Values.postgres.config.max_connections | quote }}
             - name: PG_SHARED_BUFFERS
@@ -76,10 +94,18 @@ spec:
             - name: PG_MAX_PREPARED_TRANSACTIONS
               value: {{ .Values.postgres.config.max_prepared_transactions | quote }}
 
+            # LOGIC:
+            #   Tells the scripts how many workers to expect/wait for.
             - name: PG_WORKER_REPLICAS
               value: {{ .Values.postgres.worker.replicas | quote }}
 
           lifecycle:
+            # AUTOMATION:
+            #   This hook runs immediately after the container starts.
+            #   'register-workers.sh' runs in the background to wait for workers
+            #   to come online and then registers them with 'master_add_node'.
+            #   TRICK: We use '&' or a wrapper script to ensure postStart doesn't block
+            #   the container from entering 'Running' state if workers are slow.
             postStart:
               exec:
                 command: ["/bin/bash", "/usr/local/bin/citus-scripts/register-workers.sh", "--poststart"]

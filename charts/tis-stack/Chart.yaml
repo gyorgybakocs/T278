@@ -1,6 +1,26 @@
+# API VERSION:
+#   'v2' indicates this chart is designed for Helm 3.
+#   It supports modern features like 'dependencies' (though not used here yet)
+#   and library charts.
 apiVersion: v2
+
 name: tis-stack
 description: TISAI Infrastructure Stack (Redis)
+
+# TYPE:
+#   'application' is the default for charts that deploy services.
+#   The alternative would be 'library', which only provides templates/functions
+#   but creates no artifacts on its own.
 type: application
+
+# CHART VERSION:
+#   Tracks the version of the *installer logic* (Templates, Values structure).
+#   This should be incremented when you change the YAML templates, even if the
+#   underlying software (Redis/Postgres) hasn't changed.
 version: 0.1.0
+
+# APP VERSION:
+#   Tracks the version of the *software being deployed* (e.g., the Redis binary).
+#   This is purely informational for Helm but appears in 'helm list' output.
+#   It helps operators quickly see what version of the app is running.
 appVersion: "1.0.0"

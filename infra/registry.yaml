@@ -6,10 +6,17 @@ metadata:
   labels:
     app: registry
 spec:
+  # EXPOSURE:
+  #   We use NodePort to expose the registry on a static port (30500) on the host node.
+  #   WHY: This allows external tools (like 'curl' in verify-builds.sh) and the Minikube
+  #   runtime itself to access the registry at localhost:30500 or minikube-ip:30500.
+  #   Standard ClusterIP would only be accessible from inside pods.
   type: NodePort
   ports:
     - port: 5000
       targetPort: 5000
+      # STATIC PORT:
+      #   Fixed to 30500 to simplify scripts (like verify-builds.sh) that need to query the catalog.
       nodePort: 30500
       name: registry
   selector:
@@ -34,6 +41,9 @@ spec:
     spec:
       containers:
         - name: registry
+          # IMAGE:
+          #   Official Docker Registry 2.0 image.
+          #   It provides the HTTP API V2 implementation compliant with OCI standards.
           image: registry:2
           ports:
             - containerPort: 5000
@@ -43,4 +53,9 @@ spec:
               mountPath: /var/lib/registry
       volumes:
         - name: registry-storage
+          # STORAGE:
+          #   Using 'emptyDir' means the images are stored in the Pod's ephemeral storage.
+          #   RISK: If the registry pod restarts, all built images are LOST.
+          #   This is acceptable for a local dev/test environment (Minikube), but
+          #   in production, this should be S3 or a PVC.
           emptyDir: {}

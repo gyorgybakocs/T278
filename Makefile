@@ -7,24 +7,16 @@ PORTFORWARD = REDIS
 ROLLING_DEPLOYMENTS = REDIS POSTGRES-COORDINATOR POSTGRES-WORKER
 
 # Default credentials (injectable via command line)
+# SECURITY:
+#   These are insecure defaults intended strictly for local development (Minikube).
+#   In production, these must be overridden by CI/CD secrets.
 REDIS_PASS ?= redissecret
 POSTGRES_PASS ?= password
 AWS_KEY_ID ?= AKIAX7SUEXAT7OWTXRLH
 AWS_SECRET_KEY ?= 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
 AWS_REGION ?= eu-central-1
 ECR_URL ?= 548858542119.dkr.ecr.eu-central-1.amazonaws.com
-#LANGFLOW_SECRET_KEY ?= super_secret_dev_key
-#LANGFLOW_SUPERUSER_PASS ?= service_user
-#LANGFLOW_PASS ?= langflow
 
-#################################################################3
-#make bootstrap
-#make deploy-app
-#make calculate-resources
-
-# ---------------------------------------------------------------------------------
-# ---------------------------- AWS & BASE IMAGES ----------------------------------
-# ---------------------------------------------------------------------------------
 # ---------------------------------------------------------------------------------
 # ---------------------------- AWS & BASE IMAGES ----------------------------------
 # ---------------------------------------------------------------------------------
@@ -34,11 +26,17 @@ aws-login:
 	aws configure set aws_secret_access_key "$(AWS_SECRET_KEY)"; \
 	aws configure set region "$(AWS_REGION)";
 	@echo "======================= LOGGING IN TO AWS ECR =========================="
+	# INTENT:
+	#   Authenticate the local Docker daemon with the remote ECR registry to allow
+	#   pulling base images that are not public.
 	@aws ecr get-login-password --region $(AWS_REGION) | \
 	docker login --username AWS --password-stdin "$(ECR_URL)"
 
 base-build:
 	@echo "----------------- Starting port-forward to local registry -------------------"
+	# TRADE-OFF:
+	#   We run port-forward in the background (&) to allow the subsequent docker commands
+	#   to push to localhost:5000. This is brittle; if the port-forward dies, the push fails.
 	@kubectl port-forward svc/registry 5000:5000 > /dev/null 2>&1 &
 	@echo "Waiting for port-forward..." && sleep 5
 
@@ -69,6 +67,11 @@ base-build:
     	done
 
 	@echo "----------------- Pulling, Tagging, and Pushing Docker Hub Base Images -------------------"
+	# PURPOSE:
+	#   Mirror public images (Docker Hub) into the local registry.
+	# WHY:
+	#   This ensures the cluster works even if internet access is lost later,
+	#   and speeds up pod startup time by keeping images local to the node.
 	@for base_name in $(DOCKERHUB_BASE_NAMES); do \
 			config_map=$$(echo $$base_name | tr 'A-Z' 'a-z')-config; \
 			\
@@ -89,6 +92,9 @@ base-build:
 	@echo "----------------- Verifying images in local registry -------------------"
 	@curl -s http://localhost:5000/v2/_catalog
 	@echo "----------------- Killing port-forward process -------------------"
+	# CLEANUP:
+	#   Kill the background port-forward process to free port 5000.
+	#   We ignore errors (|| true) in case the process already died.
 	@fuser -k 5000/tcp > /dev/null 2>&1 || true
 
 
@@ -97,12 +103,21 @@ base-build:
 # ---------------------------------------------------------------------------------
 mk-up:
 	@echo "----------------- Starting Minikube -------------------"
+	# CONFIG:
+	#   --insecure-registry: Required to allow Minikube to pull from our
+	#   local HTTP (non-HTTPS) registry hosted inside the cluster itself.
 	minikube start --insecure-registry="192.168.0.0/16" --force
 	minikube config set insecure-registry "registry.default.svc.cluster.local:5000"
 	minikube config set insecure-registry "localhost:5000"
 
 mk-setup:
 	@echo "----------------- Mounting working directory into Minikube -------------------"
+	# PURPOSE:
+	#   Copy source code into the Minikube VM.
+	# WHY:
+	#   The 'Kaniko' build jobs running inside the cluster need access to the
+	#   Dockerfiles and source scripts. HostPath mounts are unreliable across drivers,
+	#   so we use `docker cp`.
 	docker cp . minikube:/workspace
 
 mk-delete:
@@ -163,6 +178,11 @@ helm-install-config:
 
 deploy-app:
 	@echo "----------------- Enabling TIS Stack DEPLOYMENTS -------------------"
+	# INTENT:
+	#   Second pass of Helm deployment: toggle 'onlyConfig' to false.
+	# WHY:
+	#   We first deploy configs to allow Kaniko builds to read version metadata.
+	#   Once builds are done (in 'build-k8s'), we enable the actual workloads here.
 	@helm upgrade tis-stack ./charts/tis-stack \
 		--namespace default \
 		--reuse-values \
@@ -198,6 +218,12 @@ build-k8s:
 
 rollout-restart:
 	@echo "----------------- Restarting Workloads (Smart Detection) -------------------"
+	# INTENT:
+	#   Restart pods to pick up new configurations or images without downtime.
+	# LOGIC:
+	#   Dynamically determines if a workload is a StatefulSet or a Deployment
+	#   by inspecting the OwnerReference of the pods. This allows the script
+	#   to be generic across different workload types.
 	@for base_name in $(ROLLING_DEPLOYMENTS); do \
 		svc=$$(echo $$base_name | tr 'A-Z' 'a-z'); \
 		selector="app.kubernetes.io/component=$$svc"; \

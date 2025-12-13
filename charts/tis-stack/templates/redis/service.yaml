@@ -2,17 +2,31 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: redis # Hardcoded to match legacy expectations if needed, or use "include"
+  # NAMING:
+  #   Hardcoded to 'redis' to provide a predictable DNS hostname (e.g., 'redis.default.svc.cluster.local').
+  #   This is crucial for legacy applications or configurations that expect a fixed hostname
+  #   rather than a dynamic release-based name.
+  name: redis
   labels:
     {{- include "tis-stack.labels" . | nindent 4 }}
 spec:
+  # VISIBILITY:
+  #   'ClusterIP' restricts access to internal cluster traffic only.
+  #   WHY: Redis contains sensitive data and should not be exposed directly to the public internet
+  #   via LoadBalancer or NodePort unless explicitly tunneled.
   type: ClusterIP
   ports:
     - port: 6379
+      # MAPPING:
+      #   Routes traffic from port 6379 on the Service IP to port 6379 on the container.
       targetPort: 6379
       protocol: TCP
       name: redis
   selector:
+    # DISCOVERY:
+    #   Selects the Redis pod based on labels.
+    #   This decouples the Service IP from the ephemeral Pod IP, ensuring traffic finds the
+    #   active Redis instance even after restarts.
     {{- include "tis-stack.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: redis
 {{- end }}

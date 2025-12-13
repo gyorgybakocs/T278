@@ -8,8 +8,15 @@ test_db() {
     echo "🧪 TESTING POSTGRES (COORDINATOR) FLOW"
     echo "==============================================="
 
+    # PURPOSE:
+    #   Isolate the database process verification from service discovery issues.
+    #   We target the Pod directly rather than the Service IP to confirm the
+    #   Postgres process itself is healthy, regardless of K8s networking state.
     local client_pod=$(get_latest_pod "postgres-coordinator")
     local db_name="langflow_db"
+    # TRADE-OFF:
+    #   Using a timestamp-based suffix avoids collisions if multiple tests run in parallel,
+    #   though this script is currently designed for sequential execution.
     local test_table="smoke_test_$(date +%s)"
     local test_value="InitTest_$(date +%s)"
 
@@ -25,6 +32,9 @@ test_db() {
     echo "-----------------------------------------------"
 
     # 1. List all databases
+    # INTENT:
+    #   Verify that the bootstrap phase successfully created the expected databases
+    #   (e.g., langflow_db) before attempting strictly typed operations.
     echo "Available Databases:"
     kubectl exec $client_pod -- bash -c "
         export PGPASSWORD=\"\$POSTGRES_PASSWORD\";
@@ -41,7 +51,10 @@ test_db() {
 
     echo "-----------------------------------------------"
     echo "1️⃣  Writing to POSTGRES COORDINATOR (Port: 5432)"
-    # Currently writing directly to Coordinator as PgBouncer is not yet deployed
+    # TRADE-OFF:
+    #   Directly accessing the Coordinator (Port 5432) bypasses any potential PgBouncer
+    #   or load balancer layer. This ensures we are testing the storage engine,
+    #   not the middleware.
     kubectl exec $client_pod -- bash -c "
         export PGPASSWORD=\"\$POSTGRES_PASSWORD\";
         psql -U \"\$POSTGRES_USER\" -h localhost -p 5432 -d $db_name -c \"
@@ -53,6 +66,10 @@ test_db() {
 
     echo "-----------------------------------------------"
     echo "2️⃣  Reading directly from POSTGRES (Localhost, Port: 5432)"
+    # RISK:
+    #   This check implies strong consistency. If we were testing a read-replica here,
+    #   we might encounter replication lag. Since this is the Coordinator, immediate
+    #   consistency is expected.
     local read_val=$(kubectl exec $client_pod -- bash -c "
         export PGPASSWORD=\"\$POSTGRES_PASSWORD\";
         psql -U \"\$POSTGRES_USER\" -h localhost -p 5432 -d $db_name -tA -c \"
@@ -72,6 +89,9 @@ test_db() {
 
     echo "-----------------------------------------------"
     echo "🧹 Cleaning up test table..."
+    # WHY:
+    #   Leaving test tables pollutes the schema and can confuse future manual debugging.
+    #   We drop the specific ephemeral table created for this run.
     kubectl exec $client_pod -- bash -c "
         export PGPASSWORD=\"\$POSTGRES_PASSWORD\";
         psql -U \"\$POSTGRES_USER\" -h localhost -p 5432 -d $db_name -c \"DROP TABLE $test_table;\"

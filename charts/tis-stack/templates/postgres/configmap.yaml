@@ -6,27 +6,38 @@ metadata:
   labels:
     {{- include "tis-stack.labels" . | nindent 4 }}
 data:
-  # --- Auth & DB Info (Legacy variables restored) ---
+  # IDENTITY:
+  #   Basic connection parameters used by application clients.
+  #   'POSTGRES_DB' is the default database created at startup.
   POSTGRES_DB: {{ .Values.postgres.auth.database | quote }}
   POSTGRES_USER: {{ .Values.postgres.auth.username | quote }}
 
-  # --- Image Metadata ---
+  # ARTIFACTS:
+  #   Metadata describing the container image.
+  #   Used by the build jobs (Kaniko) to tag images consistently with the deployment.
   POSTGRES_IMAGE: {{ .Values.postgres.image.originalName | quote }}
   POSTGRES_VERSION: {{ .Values.global.versions.postgres | quote }}
   POSTGRES_BUILT_IMAGE: "{{ .Values.postgres.image.repository }}:{{ .Values.postgres.image.tag }}"
   POSTGRES_REPOSITORY: {{ .Values.postgres.image.repository | quote }}
 
-  # --- Service Endpoints (Citus adapted) ---
-  # Previously "postgres-db", now pointing to the Coordinator service
+  # DISCOVERY (COORDINATOR):
+  #   Points explicitly to the 'postgres-coordinator' service.
+  #   WHY: In a Citus architecture, applications must ONLY connect to the Coordinator.
+  #   Direct connections to Workers would fail to see the distributed data.
   POSTGRES_SERVICE: "postgres-coordinator"
   POSTGRES_HOST: "postgres-coordinator"
   POSTGRES_PORT: {{ .Values.postgres.service.port | quote }}
   POSTGRES_REDIRECT_PORT: {{ .Values.postgres.service.redirectPort | quote }}
 
-  # Worker Service Pattern (New for Citus)
+  # DISCOVERY (WORKERS):
+  #   Defines the DNS pattern for Headless Service resolution.
+  #   Used by the coordinator scripts to register worker nodes dynamically.
   POSTGRES_WORKER_SERVICE_PATTERN: "postgres-worker-headless"
 
-  # --- Tuning Defaults (ALL legacy variables restored) ---
+  # TUNING:
+  #   These values are injected into 'postgresql.conf' at runtime via 'envsubst'.
+  #   They allow adjusting memory and concurrency limits without rebuilding the image.
+  #   CRITICAL: 'MAX_PREPARED_TRANSACTIONS' must be >= 'MAX_CONNECTIONS' for Citus 2PC.
   MAX_CONNECTIONS: {{ .Values.postgres.config.max_connections | quote }}
   MAX_PREPARED_TRANSACTIONS: {{ .Values.postgres.config.max_prepared_transactions | quote }}
   SHARED_BUFFERS: {{ .Values.postgres.config.shared_buffers | quote }}

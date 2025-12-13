@@ -2,9 +2,13 @@
 set -euo pipefail
 
 # --- postStart safety wrapper ---
+# HACK:
+#   Kubernetes blocks the container status 'Running' until the postStart hook completes.
+#   If this script takes too long (waiting for workers), K8s might kill the container.
+#   SOLUTION: We detect the flag, spawn the real logic in the background (nohup), and exit immediately.
 if [[ "${1:-}" == "--poststart" ]]; then
-  # In postStart we must NOT fail the hook.
-  # Run the real script in background and exit 0 immediately.
+  # USAGE:
+  #   Redirects I/O to avoid holding open file descriptors that might confuse the runtime.
   nohup /bin/bash "$0" --run </dev/null >/proc/1/fd/1 2>/proc/1/fd/2 &
   exit 0
 fi
@@ -21,14 +25,18 @@ NAMESPACE="${POD_NAMESPACE:-default}"
 WORKER_REPLICAS="${PG_WORKER_REPLICAS:-0}"
 WORKER_STS="${PG_WORKER_STATEFULSET_NAME:-}"
 
-# Wait policy for workers
+# TIMING:
+#   Timeouts to prevent infinite loops if workers never come up.
 WORKER_WAIT_TIMEOUT_SEC="${WORKER_WAIT_TIMEOUT_SEC:-600}"   # 10 minutes
 WORKER_WAIT_INTERVAL_SEC="${WORKER_WAIT_INTERVAL_SEC:-3}"
 
 log() { echo "[$(date -Iseconds)] $*"; }
 
 # ---- Guardrails: never fail the container in postStart ----
-# If something critical is missing, log and exit 0.
+# RISK:
+#   If we exit with non-zero in a background process, it's just a log error.
+#   But we explicitly choose to 'exit 0' even on missing configs to keep the coordinator alive for debugging.
+
 if [[ -z "$WORKER_STS" ]]; then
   log "WARN: PG_WORKER_STATEFULSET_NAME is missing -> skip worker registration."
   exit 0
@@ -39,6 +47,8 @@ if [[ -z "${PGPASSWORD:-}" ]]; then
   exit 0
 fi
 
+# ROLE CHECK:
+#   If replicas is 0, we are likely in a standalone or worker mode, so we skip registration.
 if [[ "$WORKER_REPLICAS" -le 0 ]]; then
   log "INFO: PG_WORKER_REPLICAS=$WORKER_REPLICAS -> nothing to register."
   exit 0
@@ -49,7 +59,9 @@ until pg_isready -h localhost -p 5432 -U "$DB_USER" -d "$DB_NAME" >/dev/null 2>&
   sleep 2
 done
 
-# Ensure citus exists. If this fails transiently, do NOT kill the container.
+# SETUP:
+#   Citus extension MUST be active on the coordinator before adding nodes.
+#   We try to create it here just in case init-db.sh missed it or failed transiently.
 log "INFO: Ensuring citus extension exists in coordinator DB ($DB_NAME)..."
 if ! psql -h localhost -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=1 \
   -c "CREATE EXTENSION IF NOT EXISTS citus;" >/dev/null 2>&1; then
@@ -59,7 +71,12 @@ fi
 
 log "INFO: Registering $WORKER_REPLICAS workers from StatefulSet '$WORKER_STS' in namespace '$NAMESPACE'"
 
+# LOOP:
+#   Iterate through the expected index range of the StatefulSet (0..N-1).
 for (( i=0; i<WORKER_REPLICAS; i++ )); do
+  # DISCOVERY:
+  #   Constructs the deterministic DNS name provided by the Headless Service.
+  #   Format: <statefulset-name>-<index>.<service-name>.<namespace>.svc.cluster.local
   WORKER_HOST="${WORKER_STS}-${i}.postgres-worker-headless.${NAMESPACE}.svc.cluster.local"
   log "INFO: Worker[$i] = $WORKER_HOST"
 
@@ -73,18 +90,21 @@ for (( i=0; i<WORKER_REPLICAS; i++ )); do
     now_ts="$(date +%s)"
     if (( now_ts - start_ts > WORKER_WAIT_TIMEOUT_SEC )); then
       log "WARN: Timeout waiting for worker $WORKER_HOST -> skip this worker."
-      # DO NOT exit 1; just skip and continue.
+      # RESILIENCE:
+      #   We break the loop but continue to the next worker. One bad worker shouldn't stop the cluster.
       break
     fi
     sleep "$WORKER_WAIT_INTERVAL_SEC"
   done
 
-  # If worker never became ready, continue with next one.
+  # Double check after loop exit
   if ! pg_isready -h "$WORKER_HOST" -p 5432 -U "$DB_USER" -d "$DB_NAME" >/dev/null 2>&1; then
     continue
   fi
 
   # 2) Idempotent check: already registered?
+  #   WHY: This script runs on every container restart. We must not try to add an existing node,
+  #   as 'master_add_node' might throw an error or duplicate entries depending on version.
   EXISTS="$(psql -h localhost -U "$DB_USER" -d "$DB_NAME" -tAc \
     "SELECT 1 FROM pg_dist_node WHERE nodename='${WORKER_HOST}' AND nodeport=5432 LIMIT 1;" 2>/dev/null || true)"
 
@@ -93,7 +113,8 @@ for (( i=0; i<WORKER_REPLICAS; i++ )); do
     continue
   fi
 
-  # 3) Register (if this fails, do not kill the container)
+  # 3) Register
+  #   ACTION: Calls the Citus UDF to add the worker to the metadata.
   log "INFO: Registering node..."
   if ! psql -h localhost -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=1 \
     -c "SELECT master_add_node('${WORKER_HOST}', 5432);" >/dev/null 2>&1; then

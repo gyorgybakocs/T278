@@ -4,7 +4,15 @@ metadata:
   name: postgres-worker-build
   namespace: default
 spec:
-  backoffLimit: 0
+  # PURPOSE:
+  #   Orchestrates the build process for the Postgres Worker image.
+  #   This is distinct from the Coordinator build to allow for independent
+  #   scaling or versioning strategies in the future, even if they currently share the Dockerfile.
+
+  # WHY:
+  #   Using a K8s Job ensures the build happens in a clean, isolated environment
+  #   inside the cluster, without polluting the host node or requiring external CI runners.
+  backoffLimit: 0 # Fail immediately on error; do not retry a broken build.
   completions: 1
   parallelism: 1
   template:
@@ -15,6 +23,10 @@ spec:
           args:
             - --force
             - --context=/workspace
+            # REUSE:
+            #   We reuse the generic 'docker/postgres/Dockerfile'.
+            #   The differentiation happens via build arguments (not used here heavily yet)
+            #   or runtime configuration injected later by Helm.
             - --dockerfile=docker/postgres/Dockerfile
             - --destination=$(REGISTRY_URL)/$(POSTGRES_BUILT_IMAGE)
             - --build-arg=POSTGRES_PORT=$(POSTGRES_PORT)
@@ -22,6 +34,9 @@ spec:
             - --insecure
             - --skip-tls-verify
           securityContext:
+            # RISKS:
+            #   Running as root with privileges is dangerous but currently necessary
+            #   for Kaniko to manipulate the container filesystem and push layers.
             runAsUser: 0
             privileged: true
           volumeMounts:
@@ -29,6 +44,10 @@ spec:
               mountPath: /workspace
           workingDir: /workspace
           envFrom:
+            # DEPENDENCY:
+            #   Loads the 'postgres-config' ConfigMap.
+            #   This ensures the worker build uses the exact same version/tag definitions
+            #   as the runtime environment.
             - configMapRef:
                 name: postgres-config
           env:
@@ -43,5 +62,8 @@ spec:
       volumes:
         - name: workspace
           hostPath:
+            # CONSTRAINT:
+            #   Direct host path mounting implies this Job must run on the node
+            #   where the source code was copied (Minikube single-node assumption).
             path: /workspace
             type: Directory

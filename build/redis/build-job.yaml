@@ -4,23 +4,43 @@ metadata:
   name: redis-build
   namespace: default
 spec:
-  backoffLimit: 0
+  # PURPOSE:
+  #   This Job automates the container build process for Redis using Kaniko.
+  #   It runs inside the cluster, eliminating the need for a local Docker daemon
+  #   and ensuring consistent build environments.
+
+  # WHY:
+  #   We use a 'Job' rather than a persistent Pod because the build is a finite
+  #   task that should terminate and release resources once the image is pushed.
+  backoffLimit: 0 # Fail fast if the build encounters an error; do not retry indefinitely.
   completions: 1
   parallelism: 1
   template:
     spec:
       containers:
         - name: kaniko
+          # USAGE:
+          #   Kaniko is chosen over Docker-in-Docker (DinD) to improve security
+          #   and compatibility with standard Kubernetes container runtimes (containerd/CRI-O).
           image: gcr.io/kaniko-project/executor:latest
           args:
             - --force
+            # CONTEXT:
+            #   The build context is mounted from the host workspace.
+            #   This allows Kaniko to access the local source code without git cloning.
             - --context=/workspace
             - --dockerfile=docker/redis/Dockerfile
+            # DESTINATION:
+            #   Pushes the built image to the internal cluster registry.
+            #   Standard variable expansion ($) is used here for dynamic configuration.
             - --destination=$(REGISTRY_URL)/$(REDIS_BUILT_IMAGE)
             - --build-arg=IMAGE_FROM_REGISTRY=$(REGISTRY_URL)/$(REDIS_BUILT_IMAGE)
-            - --insecure
+            - --insecure # Required because the internal registry (NodePort) lacks a valid TLS certificate.
             - --skip-tls-verify
           securityContext:
+            # RISKS:
+            #   Privileged mode is currently required for Kaniko to perform filesystem operations
+            #   inside the container. This should be restricted in production environments using specific capabilities.
             runAsUser: 0
             privileged: true
           volumeMounts:
@@ -32,6 +52,8 @@ spec:
                 name: redis-config
           env:
             - name: REGISTRY_URL
+              # CONFIGURATION:
+              #   Points to the internal registry service accessible within the cluster.
               value: "registry.default.svc.cluster.local:5000"
             - name: REDIS_BUILT_IMAGE
               valueFrom:
@@ -42,5 +64,8 @@ spec:
       volumes:
         - name: workspace
           hostPath:
+            # CONSTRAINT:
+            #   Relies on the host's filesystem (Minikube mount) to supply source code.
+            #   This creates a dependency on the specific node where the source is present.
             path: /workspace
             type: Directory

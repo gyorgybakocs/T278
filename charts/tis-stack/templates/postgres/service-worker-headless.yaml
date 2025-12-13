@@ -6,6 +6,12 @@ metadata:
   labels:
     {{- include "tis-stack.labels" . | nindent 4 }}
 spec:
+  # DISCOVERY MODE:
+  #   'clusterIP: None' creates a Headless Service.
+  #   WHY: Instead of a single VIP (Virtual IP) that load balances across pods,
+  #   this DNS entry returns the A-records of ALL individual pod IPs directly.
+  #   This is mandatory for StatefulSets, allowing the Coordinator to address
+  #   specific workers by name (e.g., 'tis-stack-postgres-worker-0.postgres-worker-headless...').
   type: ClusterIP
   clusterIP: None # Vital for StatefulSet stable network identities
   ports:
