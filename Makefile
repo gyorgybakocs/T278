@@ -103,7 +103,6 @@ mk-up:
 
 mk-setup:
 	@echo "----------------- Mounting working directory into Minikube -------------------"
-	@# We mount the current directory to /workspace so Kaniko can see docker/redis
 	docker cp . minikube:/workspace
 
 mk-delete:
@@ -168,7 +167,6 @@ deploy-app:
 		--namespace default \
 		--reuse-values \
 		--set global.onlyConfig=false
-#	@make rollout-restart
 
 helm-uninstall:
 	helm uninstall tis-stack || true
@@ -226,8 +224,7 @@ rollout-restart:
 			fi; \
 		fi; \
 	done
-#	@make wait-for-ready
-#	@make test-system
+	@make wait-for-ready
 
 wait-for-ready:
 	@echo "----------------- Waiting for all pods to be Ready -------------------"
@@ -252,4 +249,4 @@ port-forward-services:
 # ----------------------------------- UTILS ---------------------------------------
 # ---------------------------------------------------------------------------------
 
-
+k8s: bootstrap deploy-app calculate-resources test-system
