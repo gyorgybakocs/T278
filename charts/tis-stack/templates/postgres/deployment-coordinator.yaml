@@ -1,0 +1,103 @@
+{{- if and .Values.postgres.enabled (not .Values.global.onlyConfig) -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "tis-stack.fullname" . }}-postgres-coordinator
+  labels:
+    {{- include "tis-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres-coordinator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "tis-stack.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: postgres-coordinator
+  template:
+    metadata:
+      labels:
+        {{- include "tis-stack.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: postgres-coordinator
+    spec:
+      securityContext:
+        {{- toYaml .Values.postgres.podSecurityContext | nindent 8 }}
+
+      containers:
+        - name: postgres
+          image: "{{ .Values.global.registry }}/{{ .Values.postgres.image.repository }}:{{ .Values.postgres.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+
+          envFrom:
+            - configMapRef:
+                name: postgres-config
+            - configMapRef:
+                name: global-config
+
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: tis-app-secrets
+                  key: postgres-password
+
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: tis-app-secrets
+                  key: postgres-password
+
+            - name: PG_WORKER_STATEFULSET_NAME
+              value: "{{ include "tis-stack.fullname" . }}-postgres-worker"
+
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+
+            - name: DB_LIST
+              value: "{{ range .Values.postgres.databases }}{{ . }} {{ end }}"
+
+            - name: PG_MAX_CONNECTIONS
+              value: {{ .Values.postgres.config.max_connections | quote }}
+            - name: PG_SHARED_BUFFERS
+              value: {{ .Values.postgres.config.shared_buffers | quote }}
+            - name: PG_WORK_MEM
+              value: {{ .Values.postgres.config.work_mem | quote }}
+            - name: PG_MAINTENANCE_WORK_MEM
+              value: {{ .Values.postgres.config.maintenance_work_mem | quote }}
+            - name: PG_EFFECTIVE_CACHE_SIZE
+              value: {{ .Values.postgres.config.effective_cache_size | quote }}
+            - name: PG_MAX_WORKER_PROCESSES
+              value: {{ .Values.postgres.config.max_worker_processes | quote }}
+            - name: PG_MAX_PARALLEL_WORKERS
+              value: {{ .Values.postgres.config.max_parallel_workers | quote }}
+            - name: PG_MAX_PREPARED_TRANSACTIONS
+              value: {{ .Values.postgres.config.max_prepared_transactions | quote }}
+
+            - name: PG_WORKER_REPLICAS
+              value: {{ .Values.postgres.worker.replicas | quote }}
+
+          lifecycle:
+            postStart:
+              exec:
+                command: ["/bin/bash", "/usr/local/bin/citus-scripts/register-workers.sh", "--poststart"]
+
+          ports:
+            - containerPort: 5432
+              name: postgres
+
+          resources:
+            {{- toYaml .Values.postgres.coordinator.resources | nindent 12 }}
+
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "tis-stack.fullname" . }}-postgres-coordinator-pvc
+
+{{- end }}

@@ -1,0 +1,92 @@
+{{- if and .Values.postgres.enabled (not .Values.global.onlyConfig) -}}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "tis-stack.fullname" . }}-postgres-worker
+  labels:
+    {{- include "tis-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres-worker
+spec:
+  # Connects to the Headless Service for stable network identities (DNS)
+  serviceName: "postgres-worker-headless"
+  replicas: {{ .Values.postgres.worker.replicas }}
+  selector:
+    matchLabels:
+      {{- include "tis-stack.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: postgres-worker
+  template:
+    metadata:
+      labels:
+        {{- include "tis-stack.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: postgres-worker
+    spec:
+      securityContext:
+        {{- toYaml .Values.postgres.podSecurityContext | nindent 8 }}
+      containers:
+        - name: postgres
+          image: "{{ .Values.global.registry }}/{{ .Values.postgres.image.repository }}:{{ .Values.postgres.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+
+          envFrom:
+            - configMapRef:
+                name: postgres-config
+            - configMapRef:
+                name: global-config
+
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: tis-app-secrets
+                  key: postgres-password
+
+            # --- FIX: USE SUBDIRECTORY FOR DATA ---
+            # Prevents "Operation not permitted" on PVC root
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+
+            # --- Citus Logic ---
+            # Workers are passive nodes, they do NOT register others.
+            - name: PG_WORKER_REPLICAS
+              value: "0"
+
+            # Resource Config (Same as coordinator, utilizing values from config section)
+            - name: PG_MAX_CONNECTIONS
+              value: {{ .Values.postgres.config.max_connections | quote }}
+            - name: PG_SHARED_BUFFERS
+              value: {{ .Values.postgres.config.shared_buffers | quote }}
+            - name: PG_WORK_MEM
+              value: {{ .Values.postgres.config.work_mem | quote }}
+            - name: PG_MAINTENANCE_WORK_MEM
+              value: {{ .Values.postgres.config.maintenance_work_mem | quote }}
+            - name: PG_EFFECTIVE_CACHE_SIZE
+              value: {{ .Values.postgres.config.effective_cache_size | quote }}
+            - name: PG_MAX_WORKER_PROCESSES
+              value: {{ .Values.postgres.config.max_worker_processes | quote }}
+            - name: PG_MAX_PARALLEL_WORKERS
+              value: {{ .Values.postgres.config.max_parallel_workers | quote }}
+            - name: PG_MAX_PREPARED_TRANSACTIONS
+              value: {{ .Values.postgres.config.max_prepared_transactions | quote }}
+
+          ports:
+            - containerPort: 5432
+              name: postgres
+
+          resources:
+            {{- toYaml .Values.postgres.worker.resources | nindent 12 }}
+
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+
+  # Dynamic Volume Provisioning: Creates a unique PVC for each worker pod automatically
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ "ReadWriteOnce" ]
+        storageClassName: {{ .Values.global.storageClass }}
+        resources:
+          requests:
+            storage: {{ .Values.postgres.worker.persistence.size }}
+{{- end }}

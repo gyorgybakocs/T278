@@ -1,7 +1,7 @@
 global:
   onlyConfig: false
   registry: "localhost:5000"
-  imagePullPolicy: IfNotPresent
+  imagePullPolicy: Always
   storageClass: "standard"
 
   aws:
@@ -14,8 +14,75 @@ global:
   imgPrefix: "tis"
 
   versions:
+    postgres: "tis-1.0.0"
     redis: "tis-1.0.0"
 
+# --- POSTGRES (CITUS) CONFIGURATION ---
+postgres:
+  enabled: true
+  name: postgres
+  image:
+    repository: "citus/citus"
+    tag: "built"
+    originalName: "citusdata/citus:13.2-pg16"
+
+  databases:
+    - langflow_db
+    - app_db
+    - keycloak_db
+    - langfuse_db
+
+  service:
+    port: 5432
+    redirectPort: 5433
+
+  auth:
+    username: "postgres_user"
+    database: "langflow_db"
+    password: "" # Must be present (empty) for 'required' check in secrets.yaml
+
+  podSecurityContext:
+    fsGroup: 999
+    runAsUser: 999
+    runAsGroup: 999
+
+  # Coordinator Node (Single Deployment)
+  coordinator:
+    resources:
+      requests:
+        memory: "1Gi"
+        cpu: "500m"
+      limits:
+        memory: "2Gi"
+        cpu: "1000m"
+    persistence:
+      size: 1Gi
+
+  # Worker Nodes (StatefulSet)
+  worker:
+    replicas: 3 # Initial number of workers (dynamically updated by scripts)
+    resources:
+      requests:
+        memory: "2Gi"
+        cpu: "1000m"
+      limits:
+        memory: "4Gi"
+        cpu: "2000m"
+    persistence:
+      size: 10Gi
+
+  # Tuning Variables (Injected into postgresql.conf via entrypoint)
+  config:
+    max_connections: 150
+    max_prepared_transactions: 150
+    shared_buffers: "128MB"
+    effective_cache_size: "512MB"
+    work_mem: "4MB"
+    maintenance_work_mem: "64MB"
+    max_worker_processes: 8
+    max_parallel_workers: 8
+
+# --- REDIS CONFIGURATION ---
 redis:
   enabled: true
   name: redis

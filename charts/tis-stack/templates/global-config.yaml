@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: global-config
+  labels:
+    {{- include "tis-stack.labels" . | nindent 4 }}
+data:
+  AWS_DEFAULT_REGION: {{ .Values.global.aws.region | quote }}
+  AWS_ECR_REGISTRY_URL: {{ .Values.global.aws.ecrRegistryUrl | quote }}
+  IMG_PREFIX: {{ .Values.global.imgPrefix | quote }}
+  ENV_TAG: {{ .Values.global.envTag | quote }}
+  BITBUCKET_BRANCH: "master"

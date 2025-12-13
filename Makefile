@@ -2,16 +2,20 @@
 # ---------------------------- CONFIGURATION --------------------------------------
 # ---------------------------------------------------------------------------------
 BASE_NAMES = REDIS
-# DOCKERHUB_BASE_NAMES = PGBOUNCER POSTGRES
+DOCKERHUB_BASE_NAMES = POSTGRES
 PORTFORWARD = REDIS
-ROLLING_DEPLOYMENTS = REDIS
+ROLLING_DEPLOYMENTS = REDIS POSTGRES-COORDINATOR POSTGRES-WORKER
 
 # Default credentials (injectable via command line)
 REDIS_PASS ?= redissecret
+POSTGRES_PASS ?= password
 AWS_KEY_ID ?= AKIAX7SUEXAT7OWTXRLH
 AWS_SECRET_KEY ?= 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
 AWS_REGION ?= eu-central-1
 ECR_URL ?= 548858542119.dkr.ecr.eu-central-1.amazonaws.com
+#LANGFLOW_SECRET_KEY ?= super_secret_dev_key
+#LANGFLOW_SUPERUSER_PASS ?= service_user
+#LANGFLOW_PASS ?= langflow
 
 #################################################################3
 #make bootstrap
@@ -136,7 +140,7 @@ infra-setup:
 	kubectl rollout status deployment registry -n default --timeout=180s
 
 # The main entry point
-bootstrap: mk-delete mk-up mk-setup infra-setup helm-install-config aws-login base-build build-k8s-redis
+bootstrap: mk-delete mk-up mk-setup infra-setup helm-install-config aws-login base-build build-k8s
 	@echo "==========================================================="
 	@echo "🎉 Redis System bootstrapped successfully!"
 	@echo "==========================================================="
@@ -155,6 +159,7 @@ helm-install-config:
 		--set global.aws.accessKeyId="$(AWS_KEY_ID)" \
 		--set global.aws.secretAccessKey="$(AWS_SECRET_KEY)" \
 		--set redis.auth.password="$(REDIS_PASS)" \
+		--set postgres.auth.password="$(POSTGRES_PASS)" \
 		--set global.onlyConfig=true
 
 deploy-app:
@@ -163,7 +168,7 @@ deploy-app:
 		--namespace default \
 		--reuse-values \
 		--set global.onlyConfig=false
-	@make rollout-restart
+#	@make rollout-restart
 
 helm-uninstall:
 	helm uninstall tis-stack || true
@@ -175,51 +180,54 @@ helm-template:
 # ---------------------------------------------------------------------------------
 # ----------------------------------- BUILD JOBS ----------------------------------
 # ---------------------------------------------------------------------------------
-build-k8s-redis:
-	@echo "----------------- Building Redis for Kubernetes -------------------"
-	@kubectl delete job redis-build --ignore-not-found=true
-
-	@kubectl apply -f build/redis/build-job.yaml
-
-	@echo "Waiting for Redis build job..."
-	@kubectl wait --for=condition=complete job/redis-build --timeout=180s || \
-		(echo "!!! Redis build failed logs: !!!" && kubectl logs job/redis-build --follow && exit 1)
-	@echo "Redis build completed."
+build-k8s:
+	@echo "----------------- Build jobs for Kubernetes -------------------"
+	@for base_name in $(ROLLING_DEPLOYMENTS); do \
+		name=$$(echo $$base_name | tr 'A-Z' 'a-z'); \
+		\
+		echo "----------------- Building $$name for Kubernetes -------------------"; \
+		kubectl delete job $$name-build --ignore-not-found=true; \
+		kubectl apply -f build/$$name/build-job.yaml; \
+		echo "Waiting for $$name build job..."; \
+		kubectl wait --for=condition=complete job/$$name-build --timeout=180s || \
+		(echo "!!! $$name build failed logs: !!!" && kubectl logs job/$$name-build --follow && exit 1); \
+		echo "$$name build completed."; \
+		done
 
 # ---------------------------------------------------------------------------------
 # ----------------------------------- UTILS ---------------------------------------
 # ---------------------------------------------------------------------------------
 
 rollout-restart:
-	@echo "----------------- Restarting deployments (via ownerReferences) -------------------"
+	@echo "----------------- Restarting Workloads (Smart Detection) -------------------"
 	@for base_name in $(ROLLING_DEPLOYMENTS); do \
 		svc=$$(echo $$base_name | tr 'A-Z' 'a-z'); \
 		selector="app.kubernetes.io/component=$$svc"; \
-		pod=$$(kubectl get pod -l $$selector -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true); \
-		if [ -z "$$pod" ]; then \
-			echo "❌ No pod found for $$base_name (selector: $$selector)"; \
+		echo "→ Inspecting $$base_name..."; \
+		POD=$$(kubectl get pod -l $$selector -o jsonpath='{.items[0].metadata.name}' 2>/dev/null); \
+		if [ -z "$$POD" ]; then \
+			echo "   ❌ No pods found for selector: $$selector"; \
 		else \
-			echo "→ 1 Found pod for $$base_name: $$pod"; \
-			rs=$$(kubectl get pod $$pod -o jsonpath='{.metadata.ownerReferences[0].name}' 2>/dev/null || true); \
-			if [ -z "$$rs" ]; then \
-				echo "❌ No ReplicaSet owner found for pod $$pod"; \
+			OWNER_KIND=$$(kubectl get pod $$POD -o jsonpath='{.metadata.ownerReferences[0].kind}'); \
+			OWNER_NAME=$$(kubectl get pod $$POD -o jsonpath='{.metadata.ownerReferences[0].name}'); \
+			if [ "$$OWNER_KIND" = "StatefulSet" ]; then \
+				echo "   ↳ Detected StatefulSet: $$OWNER_NAME"; \
+				kubectl rollout restart statefulset $$OWNER_NAME; \
+				echo "   ⏳ Waiting for rollout..."; \
+				kubectl rollout status statefulset $$OWNER_NAME; \
+			elif [ "$$OWNER_KIND" = "ReplicaSet" ]; then \
+				DEPLOY_NAME=$$(kubectl get rs $$OWNER_NAME -o jsonpath='{.metadata.ownerReferences[0].name}'); \
+				echo "   ↳ Detected Deployment: $$DEPLOY_NAME"; \
+				kubectl rollout restart deployment $$DEPLOY_NAME; \
+				echo "   ⏳ Waiting for rollout..."; \
+				kubectl rollout status deployment $$DEPLOY_NAME; \
 			else \
-				echo "   ↳ ReplicaSet: $$rs"; \
-				deploy=$$(kubectl get rs $$rs -o jsonpath='{.metadata.ownerReferences[0].name}' 2>/dev/null || true); \
-				if [ -z "$$deploy" ]; then \
-					echo "❌ No Deployment owner found for ReplicaSet $$rs"; \
-				else \
-					echo "   ↳ Deployment: $$deploy"; \
-					echo "--- Rolling out restart for $$deploy ---"; \
-					kubectl rollout restart deployment $$deploy; \
-					echo "Waiting for rollouts..."; \
-					kubectl rollout status deployment $$deploy; \
-				fi; \
+				echo "   ⚠️  Skipping: Unsupported owner kind ($$OWNER_KIND)"; \
 			fi; \
 		fi; \
 	done
-	@make wait-for-ready
-	@make test-system
+#	@make wait-for-ready
+#	@make test-system
 
 wait-for-ready:
 	@echo "----------------- Waiting for all pods to be Ready -------------------"

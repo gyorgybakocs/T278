@@ -1,0 +1,16 @@
+{{- if and .Values.postgres.enabled (not .Values.global.onlyConfig) -}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "tis-stack.fullname" . }}-postgres-coordinator-pvc
+  labels:
+    {{- include "tis-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres-coordinator
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.postgres.coordinator.persistence.size }}
+  storageClassName: {{ .Values.global.storageClass }}
+{{- end }}

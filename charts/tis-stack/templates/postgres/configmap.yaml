@@ -1,0 +1,38 @@
+{{- if and .Values.postgres.enabled -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-config
+  labels:
+    {{- include "tis-stack.labels" . | nindent 4 }}
+data:
+  # --- Auth & DB Info (Legacy variables restored) ---
+  POSTGRES_DB: {{ .Values.postgres.auth.database | quote }}
+  POSTGRES_USER: {{ .Values.postgres.auth.username | quote }}
+
+  # --- Image Metadata ---
+  POSTGRES_IMAGE: {{ .Values.postgres.image.originalName | quote }}
+  POSTGRES_VERSION: {{ .Values.global.versions.postgres | quote }}
+  POSTGRES_BUILT_IMAGE: "{{ .Values.postgres.image.repository }}:{{ .Values.postgres.image.tag }}"
+  POSTGRES_REPOSITORY: {{ .Values.postgres.image.repository | quote }}
+
+  # --- Service Endpoints (Citus adapted) ---
+  # Previously "postgres-db", now pointing to the Coordinator service
+  POSTGRES_SERVICE: "postgres-coordinator"
+  POSTGRES_HOST: "postgres-coordinator"
+  POSTGRES_PORT: {{ .Values.postgres.service.port | quote }}
+  POSTGRES_REDIRECT_PORT: {{ .Values.postgres.service.redirectPort | quote }}
+
+  # Worker Service Pattern (New for Citus)
+  POSTGRES_WORKER_SERVICE_PATTERN: "postgres-worker-headless"
+
+  # --- Tuning Defaults (ALL legacy variables restored) ---
+  MAX_CONNECTIONS: {{ .Values.postgres.config.max_connections | quote }}
+  MAX_PREPARED_TRANSACTIONS: {{ .Values.postgres.config.max_prepared_transactions | quote }}
+  SHARED_BUFFERS: {{ .Values.postgres.config.shared_buffers | quote }}
+  EFFECTIVE_CACHE_SIZE: {{ .Values.postgres.config.effective_cache_size | quote }}
+  WORK_MEM: {{ .Values.postgres.config.work_mem | quote }}
+  MAINTENANCE_WORK_MEM: {{ .Values.postgres.config.maintenance_work_mem | quote }}
+  MAX_WORKER_PROCESSES: {{ .Values.postgres.config.max_worker_processes | quote }}
+  MAX_PARALLEL_WORKERS: {{ .Values.postgres.config.max_parallel_workers | quote }}
+{{- end }}
