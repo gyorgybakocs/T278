@@ -26,8 +26,7 @@ WORKER_REPLICAS="${PG_WORKER_REPLICAS:-0}"
 WORKER_STS="${PG_WORKER_STATEFULSET_NAME:-}"
 
 # TIMING:
-#   Timeouts to prevent infinite loops if workers never come up.
-WORKER_WAIT_TIMEOUT_SEC="${WORKER_WAIT_TIMEOUT_SEC:-600}"   # 10 minutes
+WORKER_WAIT_TIMEOUT_SEC="${WORKER_WAIT_TIMEOUT_SEC:-600}"
 WORKER_WAIT_INTERVAL_SEC="${WORKER_WAIT_INTERVAL_SEC:-3}"
 
 log() { echo "[$(date -Iseconds)] $*"; }
@@ -71,8 +70,19 @@ fi
 
 log "INFO: Registering $WORKER_REPLICAS workers from StatefulSet '$WORKER_STS' in namespace '$NAMESPACE'"
 
-# LOOP:
-#   Iterate through the expected index range of the StatefulSet (0..N-1).
+# --- 1. STABILIZATION: Wait for ALL workers to be ready ---
+log "INFO: 🛡️  Cluster Stabilization: Waiting for ALL $WORKER_REPLICAS workers to be ready..."
+for (( i=0; i<WORKER_REPLICAS; i++ )); do
+  TARGET_HOST="${WORKER_STS}-${i}.postgres-worker-headless.${NAMESPACE}.svc.cluster.local"
+  # Fast check loop
+  until pg_isready -h "$TARGET_HOST" -p 5432 -U "$DB_USER" -d "$DB_NAME" >/dev/null 2>&1; do
+    log "INFO:    ... waiting for $TARGET_HOST (rolling update in progress?)"
+    sleep 3
+  done
+done
+log "INFO: ✅ Cluster is stable."
+
+# --- 2. REGISTRATION LOOP ---
 for (( i=0; i<WORKER_REPLICAS; i++ )); do
   # DISCOVERY:
   #   Constructs the deterministic DNS name provided by the Headless Service.
@@ -80,7 +90,7 @@ for (( i=0; i<WORKER_REPLICAS; i++ )); do
   WORKER_HOST="${WORKER_STS}-${i}.postgres-worker-headless.${NAMESPACE}.svc.cluster.local"
   log "INFO: Worker[$i] = $WORKER_HOST"
 
-  # 1) Wait for worker to be reachable (network + postgres)
+  # Wait for worker (redundant but safe)
   log "INFO: Waiting for worker to accept connections (timeout ${WORKER_WAIT_TIMEOUT_SEC}s)..."
   start_ts="$(date +%s)"
   while true; do
@@ -113,9 +123,23 @@ for (( i=0; i<WORKER_REPLICAS; i++ )); do
     continue
   fi
 
-  # 3) Register
-  #   ACTION: Calls the Citus UDF to add the worker to the metadata.
-  #   FIX: Added retry logic because master_add_node can fail if OTHER nodes are restarting/unreachable (DNS).
+  # --- 3. SANITIZATION (The Fix for Duplicate Key) ---
+  # Before adding the node, we tell all EXISTING nodes to forget about it.
+  # This prevents "duplicate key" errors if a previous attempt failed halfway.
+  EXISTING_NODES=$(psql -h localhost -U "$DB_USER" -d "$DB_NAME" -tAc "SELECT nodename FROM pg_dist_node WHERE nodeport=5432;")
+
+  if [[ -n "$EXISTING_NODES" ]]; then
+      for node in $EXISTING_NODES; do
+         # Skip self
+         if [[ "$node" == "$WORKER_HOST" ]]; then continue; fi
+
+         # Send DELETE command to the existing worker.
+         # We ignore errors (|| true) because usually the node won't exist there, which is good.
+         psql -h "$node" -U "$DB_USER" -d "$DB_NAME" -c "DELETE FROM pg_dist_node WHERE nodename='$WORKER_HOST';" >/dev/null 2>&1 || true
+      done
+  fi
+  # ---------------------------------------------------
+
   log "INFO: Registering node $WORKER_HOST..."
 
   MAX_RETRIES=10
