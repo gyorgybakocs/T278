@@ -2,9 +2,9 @@
 # ---------------------------- CONFIGURATION --------------------------------------
 # ---------------------------------------------------------------------------------
 BASE_NAMES = REDIS
-DOCKERHUB_BASE_NAMES = POSTGRES
-PORTFORWARD = REDIS
-ROLLING_DEPLOYMENTS = REDIS POSTGRES-COORDINATOR POSTGRES-WORKER
+DOCKERHUB_BASE_NAMES = PGBOUNCER POSTGRES
+PORTFORWARD = PGBOUNCER REDIS POSTGRES
+ROLLING_DEPLOYMENTS = PGBOUNCER REDIS POSTGRES-COORDINATOR POSTGRES-WORKER
 
 # Default credentials (injectable via command line)
 # SECURITY:
@@ -137,27 +137,32 @@ test-system:
 
 calculate-resources:
 	@chmod +x scripts/calculate-resources.sh
-
-	# 🛑 1. PRE-CHECK: Wait for stability before touching anything
-	@echo "⏳ Waiting for initial DB stabilization..."
-	@make wait-for-ready
-	@kubectl wait --for=condition=ready pod -l app.kubernetes.io/component=postgres-coordinator --timeout=120s
-	@sleep 5
-
-	# 🚀 2. EXECUTE: Apply new resources (Triggers Rolling Update)
 	@bash scripts/calculate-resources.sh
-
-	# 🛑 3. POST-CHECK: STRICTLY WAIT for the Rolling Update to finish
-	@echo "⏳ Waiting for StatefulSet Rollout to complete (DNS stabilization)..."
-	@kubectl rollout status statefulset/tis-stack-postgres-worker -n default --timeout=300s
-	@kubectl rollout status deployment/tis-stack-postgres-coordinator -n default --timeout=300s
-
-	# 🛡️ 4. EXTRA SAFETY: Wait for DNS propagation
-	@echo "💤 Sleeping 10s to let internal DNS cache expire..."
-	@sleep 10
-
-	@kubectl get pods
 	@make checking-vars
+
+#calculate-resources:
+#	@chmod +x scripts/calculate-resources.sh
+#
+#	# 🛑 1. PRE-CHECK: Wait for stability before touching anything
+#	@echo "⏳ Waiting for initial DB stabilization..."
+#	@make wait-for-ready
+#	@kubectl wait --for=condition=ready pod -l app.kubernetes.io/component=postgres-coordinator --timeout=120s
+#	@sleep 5
+#
+#	# 🚀 2. EXECUTE: Apply new resources (Triggers Rolling Update)
+#	@bash scripts/calculate-resources.sh
+#
+#	# 🛑 3. POST-CHECK: STRICTLY WAIT for the Rolling Update to finish
+#	@echo "⏳ Waiting for StatefulSet Rollout to complete (DNS stabilization)..."
+#	@kubectl rollout status statefulset/tis-stack-postgres-worker -n default --timeout=300s
+#	@kubectl rollout status deployment/tis-stack-postgres-coordinator -n default --timeout=300s
+#
+#	# 🛡️ 4. EXTRA SAFETY: Wait for DNS propagation
+#	@echo "💤 Sleeping 10s to let internal DNS cache expire..."
+#	@sleep 10
+#
+#	@kubectl get pods
+#	@make checking-vars
 
 checking-vars:
 	@chmod +x scripts/checking-vars.sh

@@ -1,6 +1,56 @@
 #!/bin/bash
-set -e
+set -e  # Exit immediately if a command exits with a non-zero status
 
+# ==============================================================================
+# HELPER FUNCTIONS
+# ==============================================================================
+
+log() {
+    echo -e "[\033[1;34m$(date +'%H:%M:%S')\033[0m] $1"
+}
+
+wait_for_pre_stability() {
+    log "🛑 PRE-CHECK: Verifying database stability before upgrade..."
+
+    # Check if the coordinator pod exists to avoid waiting on first deployment
+    if kubectl get pod -l app.kubernetes.io/component=postgres-coordinator --no-headers | grep -q "."; then
+        # Wait for the Coordinator to be ready.
+        # This prevents the 'Race Condition' where Helm restarts a pod that is still initializing (WAL creation).
+        kubectl wait --for=condition=ready pod -l app.kubernetes.io/component=postgres-coordinator --timeout=120s > /dev/null
+
+        log "✅ Coordinator is responding. Pausing for WAL flush safety..."
+        sleep 5
+    else
+        log "ℹ️  No existing coordinator found. Skipping pre-check (First deployment?)."
+    fi
+}
+
+wait_for_rollout_success() {
+    log "🛑 POST-CHECK: Waiting for Rolling Update to complete..."
+
+    # 1. Wait for StatefulSet (Workers) - This fixes the DNS/Network errors
+    log "⏳ Waiting for Workers to stabilize..."
+    kubectl rollout status statefulset/tis-stack-postgres-worker -n default --timeout=300s
+
+    # 2. Wait for Deployment (Coordinator)
+    log "⏳ Waiting for Coordinator to stabilize..."
+    kubectl rollout status deployment/tis-stack-postgres-coordinator -n default --timeout=300s
+
+    # 3. DNS Cache buffer
+    log "💤 Pausing 10s for internal DNS propagation..."
+    sleep 10
+
+    log "✅ Deployment successful. Cluster is stable."
+}
+
+# ==============================================================================
+# EXECUTION FLOW
+# ==============================================================================
+
+# --- STEP 1: PRE-CHECK ---
+wait_for_pre_stability
+
+# --- STEP 2: RESOURCE CALCULATION & HELM UPGRADE ---
 echo "==========================================================="
 echo "⚙️  DYNAMIC RESOURCE CALCULATION (Smart Adaptive + Burstable)"
 echo "==========================================================="
@@ -223,3 +273,9 @@ configure_postgres
 echo "==============================================="
 echo "🎉 ALL RESOURCE CALCULATION WERE SET SUCCESSFULLY"
 echo "==============================================="
+
+# --- STEP 3: POST-CHECK ---
+# This ensures the script only exits when the cluster is actually ready for tests
+wait_for_rollout_success
+
+exit 0

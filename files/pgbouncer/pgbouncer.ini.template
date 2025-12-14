@@ -1,0 +1,15 @@
+[databases]
+* = host=${DB_HOST} port=${DB_PORT}
+
+[pgbouncer]
+ignore_startup_parameters = extra_float_digits,binary_parameters
+listen_port = ${LISTEN_PORT}
+listen_addr = 0.0.0.0
+auth_type = plain
+auth_file = /etc/pgbouncer/userlist.txt
+admin_users = ${DB_USER}
+stats_users = ${DB_USER}
+pool_mode = ${POOL_MODE}
+max_client_conn = ${MAX_CLIENT_CONN}
+default_pool_size = ${DEFAULT_POOL_SIZE}
+min_pool_size = 50

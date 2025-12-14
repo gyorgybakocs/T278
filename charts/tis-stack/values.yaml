@@ -33,6 +33,20 @@ global:
     postgres: "tis-1.0.0"
     redis: "tis-1.0.0"
 
+pgbouncer:
+  enabled: true
+  image:
+    repository: "pgbouncer/pgbouncer"
+    tag: "built"
+    originalName: "edoburu/pgbouncer:v1.24.1-p1"
+  service:
+    port: 6432
+    redirectPort: 6433
+  pool:
+    mode: session
+    max_client_conn: 1000
+    default_pool_size: 20
+
 # --- POSTGRES (CITUS) CONFIGURATION ---
 postgres:
   enabled: true

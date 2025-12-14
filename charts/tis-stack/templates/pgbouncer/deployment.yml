@@ -1,0 +1,73 @@
+{{- if and .Values.pgbouncer.enabled (not .Values.global.onlyConfig) -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "tis-stack.fullname" . }}-pgbouncer
+  labels:
+    {{- include "tis-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: pgbouncer
+spec:
+  # SCALING:
+  #   PgBouncer is lightweight and stateless, but usually 1 replica is enough
+  #   to handle the connection pooling for the Coordinator.
+  replicas: {{ .Values.pgbouncer.replicaCount | default 1 }}
+  selector:
+    matchLabels:
+      {{- include "tis-stack.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: pgbouncer
+  template:
+    metadata:
+      labels:
+        {{- include "tis-stack.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: pgbouncer
+    spec:
+      containers:
+        - name: pgbouncer
+          # IMAGE:
+          #   Uses the image built in the previous 'Build Phase' (make k8s).
+          #   This image contains the 'envsubst' tool and our custom entrypoint.sh.
+          image: "{{ .Values.global.registry }}/{{ .Values.pgbouncer.image.repository }}:{{ .Values.pgbouncer.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+
+          ports:
+            - containerPort: {{ .Values.pgbouncer.service.port }}
+              name: pgbouncer
+
+          envFrom:
+            # CONFIGURATION:
+            #   Loads pooling settings (POOL_MODE, MAX_CLIENT_CONN, etc.)
+            - configMapRef:
+                name: pgbouncer-config
+            - configMapRef:
+                name: global-config
+
+          env:
+            # CONNECTIVITY:
+            #   Points PgBouncer to the Postgres Coordinator Service.
+            - name: DB_HOST
+              value: "{{ include "tis-stack.fullname" . }}-postgres-coordinator"
+
+            - name: DB_PORT
+              value: "5432"
+
+            # AUTHENTICATION:
+            #   The entrypoint.sh needs these to generate 'userlist.txt'.
+            #   We fetch the password securely from the Secret.
+            - name: DB_USER
+              value: "{{ .Values.postgres.auth.username }}"
+
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: tis-app-secrets
+                  key: postgres-password
+
+            # CONFIG GENERATION:
+            #   Overrides for the internal pgbouncer.ini generation
+            - name: LISTEN_PORT
+              value: "{{ .Values.pgbouncer.service.port }}"
+
+          resources:
+            {{- toYaml .Values.pgbouncer.resources | nindent 12 }}
+
+{{- end }}
