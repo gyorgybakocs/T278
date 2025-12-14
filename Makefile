@@ -1,21 +1,27 @@
 # ---------------------------------------------------------------------------------
 # ---------------------------- CONFIGURATION --------------------------------------
 # ---------------------------------------------------------------------------------
-BASE_NAMES = REDIS
+BASE_NAMES = REDIS LANGFLOW
 DOCKERHUB_BASE_NAMES = PGBOUNCER POSTGRES
-PORTFORWARD = PGBOUNCER REDIS POSTGRES
-ROLLING_DEPLOYMENTS = PGBOUNCER REDIS POSTGRES-COORDINATOR POSTGRES-WORKER
+PORTFORWARD = PGBOUNCER REDIS POSTGRES LANGFLOW
+ROLLING_DEPLOYMENTS = PGBOUNCER REDIS POSTGRES-COORDINATOR POSTGRES-WORKER LANGFLOW
 
 # Default credentials (injectable via command line)
 # SECURITY:
 #   These are insecure defaults intended strictly for local development (Minikube).
 #   In production, these must be overridden by CI/CD secrets.
 REDIS_PASS ?= redissecret
+
 POSTGRES_PASS ?= password
+
 AWS_KEY_ID ?= AKIAX7SUEXAT7OWTXRLH
 AWS_SECRET_KEY ?= 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
 AWS_REGION ?= eu-central-1
 ECR_URL ?= 548858542119.dkr.ecr.eu-central-1.amazonaws.com
+
+LANGFLOW_SECRET_KEY ?= super_secret_dev_key
+LANGFLOW_SUPERUSER_PASS ?= service_user
+LANGFLOW_PASS ?= langflow
 
 # ---------------------------------------------------------------------------------
 # ---------------------------- AWS & BASE IMAGES ----------------------------------
@@ -140,30 +146,6 @@ calculate-resources:
 	@bash scripts/calculate-resources.sh
 	@make checking-vars
 
-#calculate-resources:
-#	@chmod +x scripts/calculate-resources.sh
-#
-#	# 🛑 1. PRE-CHECK: Wait for stability before touching anything
-#	@echo "⏳ Waiting for initial DB stabilization..."
-#	@make wait-for-ready
-#	@kubectl wait --for=condition=ready pod -l app.kubernetes.io/component=postgres-coordinator --timeout=120s
-#	@sleep 5
-#
-#	# 🚀 2. EXECUTE: Apply new resources (Triggers Rolling Update)
-#	@bash scripts/calculate-resources.sh
-#
-#	# 🛑 3. POST-CHECK: STRICTLY WAIT for the Rolling Update to finish
-#	@echo "⏳ Waiting for StatefulSet Rollout to complete (DNS stabilization)..."
-#	@kubectl rollout status statefulset/tis-stack-postgres-worker -n default --timeout=300s
-#	@kubectl rollout status deployment/tis-stack-postgres-coordinator -n default --timeout=300s
-#
-#	# 🛡️ 4. EXTRA SAFETY: Wait for DNS propagation
-#	@echo "💤 Sleeping 10s to let internal DNS cache expire..."
-#	@sleep 10
-#
-#	@kubectl get pods
-#	@make checking-vars
-
 checking-vars:
 	@chmod +x scripts/checking-vars.sh
 	@bash scripts/checking-vars.sh
@@ -197,6 +179,9 @@ helm-install-config:
 		--set global.aws.secretAccessKey="$(AWS_SECRET_KEY)" \
 		--set redis.auth.password="$(REDIS_PASS)" \
 		--set postgres.auth.password="$(POSTGRES_PASS)" \
+		--set langflow.auth.secretKey="$(LANGFLOW_SECRET_KEY)" \
+		--set langflow.auth.superuserPassword="$(LANGFLOW_SUPERUSER_PASS)" \
+		--set langflow.auth.password="$(LANGFLOW_PASS)" \
 		--set global.onlyConfig=true
 
 deploy-app:

@@ -204,17 +204,15 @@ configure_postgres() {
     # --- 5. POSTGRES TUNING (Based on POD RAM LIMIT) ---
 
     # Max Connections: 50 per GB of POD RAM.
-    local pg_max_connections=$(( pod_ram_mb / 1024 * 50 ))
-    if [ "$pg_max_connections" -lt 100 ]; then pg_max_connections=100; fi
+    PG_MAX_CONNECTIONS=$(( pod_ram_mb / 1024 * 50 ))
+    if [ "$PG_MAX_CONNECTIONS" -lt 100 ]; then PG_MAX_CONNECTIONS=100; fi
 
     # Shared Buffers: 25% of the LIMIT (Postgres reserves this upfront!)
     local pg_shared_buffers=$(( pod_ram_mb / 4 ))
 
     # Effective Cache: 75%
     local pg_effective_cache_size=$(( pod_ram_mb * 3 / 4 ))
-
-    # Work Mem: (Pod RAM in KB) / Connections / 4 (safety divider)
-    local pg_work_mem=$(( (pod_ram_mb * 1024) / pg_max_connections / 4 ))
+    local pg_work_mem=$(( (pod_ram_mb * 1024) / PG_MAX_CONNECTIONS / 4 ))
     if [ "$pg_work_mem" -lt 4096 ]; then pg_work_mem=4096; fi
 
     # Worker Processes: Cap at 4 per pod
@@ -233,7 +231,7 @@ configure_postgres() {
     echo "   -> Replicas:              ${final_workers}"
     echo "   -> Requests (Reserved):   ${minimal_request_mb}Mi"
     echo "   -> Limits (Max Usage):    ${pod_ram_mb}Mi"
-    echo "   -> Max Connections:       ${pg_max_connections}"
+    echo "   -> Max Connections:       ${PG_MAX_CONNECTIONS}"
     echo "   -> Shared Buffers:        ${pg_shared_buffers}MB"
     echo "   -> Work Mem:              ${pg_work_mem}kB"
     echo "==========================================================="
@@ -248,16 +246,78 @@ configure_postgres() {
         --set postgres.coordinator.resources.limits.memory="${pod_ram_mb}Mi" \
         --set postgres.worker.resources.requests.memory="${minimal_request_mb}Mi" \
         --set postgres.worker.resources.limits.memory="${pod_ram_mb}Mi" \
-        --set postgres.config.max_connections=${pg_max_connections} \
-        --set postgres.config.max_prepared_transactions=${pg_max_connections} \
+        --set postgres.config.max_connections=${PG_MAX_CONNECTIONS} \
+        --set postgres.config.max_prepared_transactions=${PG_MAX_CONNECTIONS} \
         --set postgres.config.shared_buffers="${pg_shared_buffers}MB" \
         --set postgres.config.effective_cache_size="${pg_effective_cache_size}MB" \
         --set postgres.config.work_mem="${pg_work_mem}kB" \
         --set postgres.config.maintenance_work_mem="128MB" \
-        --set postgres.config.max_worker_processes=${pg_max_worker_processes} \
-        --set postgres.config.max_parallel_workers=${pg_max_parallel_workers}
+        --set postgres.config.max_worker_processes=4 \
+        --set postgres.config.max_parallel_workers=4
 
     echo "✅ Postgres configuration applied."
+}
+
+configure_pgbouncer() {
+    echo "-----------------------------------------------------------"
+    echo "🔧 Configuring Component: PGBOUNCER"
+    echo "-----------------------------------------------------------"
+
+    # Dependency: Needs PG_MAX_CONNECTIONS calculated in configure_postgres
+    if [ -z "$PG_MAX_CONNECTIONS" ]; then
+        echo "⚠️  PG_MAX_CONNECTIONS not set, defaulting to 150."
+        PG_MAX_CONNECTIONS=150
+    fi
+
+    # Scale PgBouncer connections relative to Backend connections
+    local pgb_max_client_conn=$(( PG_MAX_CONNECTIONS * 50 ))
+    if [ "$pgb_max_client_conn" -gt 10000 ]; then pgb_max_client_conn=10000; fi
+
+    # Default Pool Size: ~50% of backend capacity
+    local pgb_default_pool_size=$(( PG_MAX_CONNECTIONS / 2 ))
+    if [ "$pgb_default_pool_size" -lt 20 ]; then pgb_default_pool_size=20; fi
+
+    echo "==========================================================="
+    echo "📊 CALCULATED OPTIMAL VALUES FOR PgBouncer:"
+    echo "   -> PgBouncer Max Conns:    ${pgb_max_client_conn}"
+    echo "   -> PgBouncer Pool Size:   ${pgb_default_pool_size}"
+    echo "==========================================================="
+
+    helm upgrade tis-stack ./charts/tis-stack \
+        --namespace default \
+        --reuse-values \
+        --set pgbouncer.pool.max_client_conn=${pgb_max_client_conn} \
+        --set pgbouncer.pool.default_pool_size=${pgb_default_pool_size}
+
+    echo "✅ PgBouncer configuration applied."
+}
+
+init_sharding() {
+    echo "-----------------------------------------------------------"
+    echo "⚡ INITIALIZING CITUS SHARDING"
+    echo "-----------------------------------------------------------"
+
+    local pg_pod=$(kubectl get pods -l app.kubernetes.io/component=postgres-coordinator -o jsonpath='{.items[0].metadata.name}')
+
+    log "✅ Tables found. Applying Distribution..."
+
+    kubectl exec "$pg_pod" -- bash -c "export PGPASSWORD=\$POSTGRES_PASSWORD; psql -U \$POSTGRES_USER -d langflow_db -c \"SELECT create_distributed_table('transaction', 'id');\"" || log "⚠️ Transaction table likely already distributed."
+    kubectl exec "$pg_pod" -- bash -c "export PGPASSWORD=\$POSTGRES_PASSWORD; psql -U \$POSTGRES_USER -d langflow_db -c \"SELECT create_distributed_table('message', 'id');\"" || log "⚠️ Message table likely already distributed."
+
+    log "✅ Sharding applied successfully."
+}
+
+switch_to_transaction() {
+    log "-----------------------------------------------------------"
+    log "🚀 SWITCHING TO TRANSACTION MODE"
+    log "-----------------------------------------------------------"
+
+    helm upgrade tis-stack ./charts/tis-stack \
+        --namespace default \
+        --reuse-values \
+        --set pgbouncer.pool.mode=transaction
+
+    log "✅ System switched to Transaction mode."
 }
 
 # ==============================================================================
@@ -270,6 +330,9 @@ configure_redis
 # Configure Postgres (New Adaptive logic)
 configure_postgres
 
+# Configure PgBouncer (Uses output from Postgres calc)
+configure_pgbouncer
+
 echo "==============================================="
 echo "🎉 ALL RESOURCE CALCULATION WERE SET SUCCESSFULLY"
 echo "==============================================="
@@ -277,5 +340,14 @@ echo "==============================================="
 # --- STEP 3: POST-CHECK ---
 # This ensures the script only exits when the cluster is actually ready for tests
 wait_for_rollout_success
+
+# --- STEP 4: APPLY SHARDING (After DB is stable and tables exist) ---
+init_sharding
+switch_to_transaction
+wait_for_rollout_success
+
+echo "==============================================="
+echo "🎉 ALL RESOURCE CALCULATIONS & SHARDING SET SUCCESSFULLY"
+echo "==============================================="
 
 exit 0

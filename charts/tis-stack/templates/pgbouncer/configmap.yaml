@@ -8,7 +8,7 @@ metadata:
 data:
   PGBOUNCER_IMAGE: {{ .Values.pgbouncer.image.originalName | quote }}
   PGBOUNCER_BUILT_IMAGE: "{{ .Values.pgbouncer.image.repository }}:{{ .Values.pgbouncer.image.tag }}"
-  PGBOUNCER_SERVICE: "pgbouncer"
+  PGBOUNCER_SERVICE: "{{ .Release.Name }}-pgbouncer"
   PGBOUNCER_PORT: {{ .Values.pgbouncer.service.port | quote }}
   PGBOUNCER_REDIRECT_PORT: {{ .Values.pgbouncer.service.redirectPort | quote }}
   PGBOUNCER_VERSION: {{ .Values.global.versions.pgbouncer | quote }}

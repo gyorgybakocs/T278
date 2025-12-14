@@ -104,6 +104,24 @@ else
   check_config "$PG_WORKER_POD" "/etc/postgresql/postgresql.conf" "${PG_PARAMS[@]}"
 fi
 
+# ==============================================================================
+# 4. CHECK PGBOUNCER
+# ==============================================================================
+# DISCOVERY:
+PGBOUNCER_POD=$(kubectl get pod -l "app.kubernetes.io/component=pgbouncer" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+
+if [ -z "$PGBOUNCER_POD" ]; then
+  echo "  ❌ No PgBouncer pod found!"
+else
+  # PARAMS:
+  PGB_PARAMS=(
+    "pool_mode"
+    "max_client_conn"
+    "default_pool_size"
+  )
+  check_config "$PGBOUNCER_POD" "/etc/pgbouncer/pgbouncer.ini" "${PGB_PARAMS[@]}"
+fi
+
 echo "==========================================================="
 echo "✅ Verification Complete."
 echo "==========================================================="

@@ -48,16 +48,32 @@ test_citus() {
     echo "-----------------------------------------------"
     echo "2️⃣  Verifying Distributed Tables (Sharding)"
 
-    # INTROSPECTION:
-    #   Queries metadata to see if any tables have actually been distributed (sharded).
-    #   This helps distinguish between a "running Citus node" and a "sharded application".
-    local dist_tables=$(run_sql "SELECT table_name || ' (' || distribution_column || ')' FROM citus_tables;")
+    # INTROSPECTION (STRICT CHECK):
+    #   Queries metadata specifically for our critical tables.
+    local dist_tables=$(run_sql "SELECT table_name || ' (' || distribution_column || ')' FROM citus_tables WHERE table_name IN ('transaction', 'message');")
 
     echo "   Found distributed tables:"
     if [ -z "$dist_tables" ]; then
-        echo "      (None found yet - normal if sharding init hasn't run)"
+        echo "      ❌ NONE FOUND!"
     else
         echo "$dist_tables" | sed 's/^/      -> /'
+    fi
+
+    # STRICT VALIDATION:
+    #   Both 'transaction' and 'message' tables MUST be distributed for the system to be considered ready.
+    if echo "$dist_tables" | grep -q "transaction" && echo "$dist_tables" | grep -q "message"; then
+        echo "✅ OK: Both 'transaction' and 'message' are distributed."
+    else
+        echo "❌ FAILED: One or more critical tables are NOT distributed!"
+        return 1
+    fi
+
+    # SCHEMA VALIDATION:
+    #   Ensure 'message' table is sharded by 'id' (Best practice/Safe mode).
+    if echo "$dist_tables" | grep "message" | grep -q "(id)"; then
+        echo "✅ OK: 'message' table is sharded by 'id'."
+    else
+        echo "⚠️  WARNING: 'message' table sharding key is NOT 'id'. Check your configuration!"
     fi
 
     echo "-----------------------------------------------"

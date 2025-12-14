@@ -32,6 +32,7 @@ global:
   versions:
     postgres: "tis-1.0.0"
     redis: "tis-1.0.0"
+    langflow: "tis-1.0.0"
 
 pgbouncer:
   enabled: true
@@ -195,3 +196,64 @@ redis:
     maxmemory: "200mb"
     maxmemoryPolicy: "allkeys-lru"
     appendonly: "yes"
+
+langflow:
+  enabled: true
+  image:
+    repository: "langflow/langflow"
+    tag: "built"
+    originalName: "ai-langflow"
+    pullPolicy: Always
+
+  service:
+    type: NodePort
+    port: 7860
+    targetPort: 7860
+    redirectPort: 7860
+    nodePort: 30001 # Fixed port for easier access
+
+  resources:
+    workers: 1
+    threads: 1
+    timeout: 120
+    keepAlive: 5
+    gracefulTimeout: 30
+    backlog: 2048
+
+  podResources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "2Gi"
+      cpu: "1"
+
+  persistence:
+    flows:
+      size: 1Gi
+    logs:
+      size: 1Gi
+
+  externalFiles:
+    hostPathRoot: "/workspace"
+    components:
+      enabled: true
+      path: "docker/langflow/src/tis_components"
+    initScripts:
+      enabled: true
+      path: "files/langflow/python"
+  config:
+    logLevel: "debug"
+    cacheType: "memory"
+    doNotTrack: "True"
+    autoLogin: "False"
+    superuser: "service_user"
+    username: "langflow"
+    createStarterProjects: "False"
+    updateStarterProjects: "False"
+    backendUrl: "http://localhost:7860"
+
+  auth:
+    secretKey: ""
+    superuserPassword: ""
+    password: ""

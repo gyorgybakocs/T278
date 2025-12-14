@@ -41,6 +41,13 @@ test_db() {
     "
 
     echo "-----------------------------------------------"
+    echo "Tables in $DB_NAME:"
+    kubectl exec $client_pod -- bash -c "
+        export PGPASSWORD=\"\$POSTGRES_PASSWORD\";
+        psql -U \"\$POSTGRES_USER\" -d $db_name -c '\dt' || echo '⚠️  Database $db_name does not exist or is not accessible.'
+    "
+
+    echo "-----------------------------------------------"
     echo "1️⃣  Writing via PGBOUNCER (Service: $pgbouncer_host, Port: $pgbouncer_port)"
 
     # CRITICAL: -h points to the PgBouncer Service (6432), not localhost.

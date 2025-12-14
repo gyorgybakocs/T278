@@ -1,0 +1,25 @@
+{{- if .Values.langflow.enabled -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: langflow-config
+  labels:
+    {{- include "tis-stack.labels" . | nindent 4 }}
+data:
+  LANGFLOW_IMAGE: {{ .Values.langflow.image.originalName | quote }}
+  LANGFLOW_VERSION: {{ .Values.global.versions.langflow | quote }}
+  LANGFLOW_BUILT_IMAGE: "{{ .Values.langflow.image.repository }}:{{ .Values.langflow.image.tag }}"
+  LANGFLOW_HOST: "0.0.0.0"
+  LANGFLOW_PORT: {{ .Values.langflow.service.port | quote }}
+  LANGFLOW_REDIRECT_PORT: {{ .Values.langflow.service.redirectPort | quote }}
+  LANGFLOW_LOG_LEVEL: {{ .Values.langflow.config.logLevel | quote }}
+  LANGFLOW_SUPERUSER: {{ .Values.langflow.config.superuser | quote }}
+  LANGFLOW_USERNAME: {{ .Values.langflow.config.username | quote }}
+  LANGFLOW_CACHE_TYPE: {{ .Values.langflow.config.cacheType | quote }}
+  LANGFLOW_AUTO_LOGIN: {{ .Values.langflow.config.autoLogin | quote }}
+  DO_NOT_TRACK: {{ .Values.langflow.config.doNotTrack | quote }}
+  POSTGRES_DB_NAME: {{ .Values.postgres.auth.database | quote }}
+  WEB_CONCURRENCY: {{ .Values.langflow.resources.workers | quote }}
+  WEB_THREADS: {{ .Values.langflow.resources.threads | quote }}
+  GUNICORN_TIMEOUT: {{ .Values.langflow.resources.timeout | quote }}
+{{- end }}

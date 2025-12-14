@@ -1,0 +1,131 @@
+{{- if .Values.langflow.enabled -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "tis-stack.fullname" . }}-langflow
+  labels:
+    {{- include "tis-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: langflow
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "tis-stack.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: langflow
+  template:
+    metadata:
+      labels:
+        {{- include "tis-stack.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: langflow
+    spec:
+      containers:
+        - name: langflow
+          image: "{{ .Values.global.registry }}/{{ .Values.langflow.image.repository }}:{{ .Values.langflow.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+
+          resources:
+            requests:
+              memory: {{ .Values.langflow.podResources.requests.memory | quote }}
+              cpu: {{ .Values.langflow.podResources.requests.cpu | quote }}
+            limits:
+              memory: {{ .Values.langflow.podResources.limits.memory | quote }}
+              cpu: {{ .Values.langflow.podResources.limits.cpu | quote }}
+
+          envFrom:
+            - configMapRef:
+                name: langflow-config
+            - configMapRef:
+                name: global-config
+
+          env:
+            # --- SECRETS ---
+            - name: LANGFLOW_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: tis-app-secrets
+                  key: langflow-secret-key
+            - name: LANGFLOW_SUPERUSER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: tis-app-secrets
+                  key: langflow-superuser-password
+            - name: LANGFLOW_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: tis-app-secrets
+                  key: langflow-password
+
+            # --- DATABASE CONNECTION (VIA PGBOUNCER) ---
+            - name: POSTGRES_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: pgbouncer-config
+                  key: PGBOUNCER_SERVICE
+            - name: POSTGRES_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: pgbouncer-config
+                  key: PGBOUNCER_PORT
+            - name: POSTGRES_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: postgres-config
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: tis-app-secrets
+                  key: postgres-password
+
+            - name: LANGFLOW_DATABASE_URL
+              value: "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB_NAME)"
+
+          command: [ "/bin/sh", "-lc" ]
+          args:
+            - >
+              exec /app/.venv/bin/python -m langflow run
+              --host 0.0.0.0
+              --port ${LANGFLOW_PORT:-7860}
+              --workers ${WEB_CONCURRENCY:-1}
+              --log-level ${LANGFLOW_LOG_LEVEL:-info}
+
+          ports:
+            - containerPort: {{ .Values.langflow.service.targetPort }}
+              protocol: TCP
+
+          readinessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: {{ .Values.langflow.service.targetPort }}
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 6
+
+          volumeMounts:
+            - name: flows-data
+              mountPath: /app/flows
+            - name: logs-data
+              mountPath: /app/logs
+            - name: init-scripts-python
+              mountPath: /app/init/python
+
+      volumes:
+        - name: flows-data
+          persistentVolumeClaim:
+            claimName: {{ include "tis-stack.fullname" . }}-langflow-flows-pvc
+        - name: logs-data
+          persistentVolumeClaim:
+            claimName: {{ include "tis-stack.fullname" . }}-langflow-logs-pvc
+        {{- if .Values.langflow.externalFiles.components.enabled }}
+        - name: tis-components
+          hostPath:
+            path: "{{ .Values.langflow.externalFiles.hostPathRoot }}/{{ .Values.langflow.externalFiles.components.path }}/"
+            type: Directory
+        {{- end }}
+        {{- if .Values.langflow.externalFiles.initScripts.enabled }}
+        - name: init-scripts-python
+          hostPath:
+            path: "{{ .Values.langflow.externalFiles.hostPathRoot }}/{{ .Values.langflow.externalFiles.initScripts.path }}/"
+            type: Directory
+        {{- end }}
+{{- end }}

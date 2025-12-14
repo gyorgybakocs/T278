@@ -1,0 +1,43 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: langflow-build
+  namespace: default
+spec:
+  backoffLimit: 0
+  completions: 1
+  parallelism: 1
+  template:
+    spec:
+      containers:
+        - name: kaniko
+          image: gcr.io/kaniko-project/executor:latest
+          args:
+            - --force
+            - --context=/workspace
+            - --dockerfile=docker/langflow/Dockerfile
+            - --destination=$(REGISTRY_URL)/$(LANGFLOW_BUILT_IMAGE)
+            - --build-arg=IMAGE_FROM_REGISTRY=$(REGISTRY_URL)/$(LANGFLOW_BUILT_IMAGE)
+            - --insecure
+            - --skip-tls-verify
+          securityContext:
+            runAsUser: 0
+            privileged: true
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+          workingDir: /workspace
+          env:
+            - name: LANGFLOW_BUILT_IMAGE
+              valueFrom:
+                configMapKeyRef:
+                  name: langflow-config
+                  key: LANGFLOW_BUILT_IMAGE
+            - name: REGISTRY_URL
+              value: "registry.default.svc.cluster.local:5000"
+      restartPolicy: Never
+      volumes:
+        - name: workspace
+          hostPath:
+            path: /workspace
+            type: Directory

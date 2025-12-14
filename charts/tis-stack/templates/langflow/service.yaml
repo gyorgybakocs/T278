@@ -1,0 +1,20 @@
+{{- if .Values.langflow.enabled -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "tis-stack.fullname" . }}-langflow
+  labels:
+    {{- include "tis-stack.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.langflow.service.type }}
+  selector:
+    {{- include "tis-stack.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: langflow
+  ports:
+    - protocol: TCP
+      port: {{ .Values.langflow.service.port }}
+      targetPort: {{ .Values.langflow.service.targetPort }}
+      {{- if and (eq .Values.langflow.service.type "NodePort") .Values.langflow.service.nodePort }}
+      nodePort: {{ .Values.langflow.service.nodePort }}
+      {{- end }}
+{{- end }}
