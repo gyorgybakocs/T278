@@ -1,24 +1,26 @@
 #!/bin/bash
 
 # Import helpers
+# INTENT: Load shared utility functions (like get_latest_pod) to ensure portability.
 source "$(dirname "${BASH_SOURCE[0]}")/helpers.sh"
 
 test_db() {
     echo "==============================================="
-    echo "🧪 TESTING POSTGRES (COORDINATOR) FLOW"
+    echo "🧪 TESTING POSTGRES & PGBOUNCER FLOW"
     echo "==============================================="
 
-    # PURPOSE:
-    #   Isolate the database process verification from service discovery issues.
-    #   We target the Pod directly rather than the Service IP to confirm the
-    #   Postgres process itself is healthy, regardless of K8s networking state.
+    # 1. Define Target
+    # We run the client (psql) inside the Coordinator pod, but target the PgBouncer Service.
     local client_pod=$(get_latest_pod "postgres-coordinator")
     local db_name="langflow_db"
-    # TRADE-OFF:
-    #   Using a timestamp-based suffix avoids collisions if multiple tests run in parallel,
-    #   though this script is currently designed for sequential execution.
+
+    # Unique table and value for the test to avoid collisions
     local test_table="smoke_test_$(date +%s)"
     local test_value="InitTest_$(date +%s)"
+
+    # Service name derived from Helm chart release name ('tis-stack')
+    local pgbouncer_host="tis-stack-pgbouncer"
+    local pgbouncer_port="6432"
 
     if [ -z "$client_pod" ]; then
         echo "❌ Coordinator pod not found (No Running pods)!"
@@ -26,50 +28,42 @@ test_db() {
     fi
 
     echo "Client Pod: $client_pod"
+    echo "Target Service: $pgbouncer_host:$pgbouncer_port"
 
     echo "-----------------------------------------------"
-    echo "🔍 DIAGNOSTICS: Listing Databases & Tables"
+    echo "🔍 DIAGNOSTICS: Listing Databases"
     echo "-----------------------------------------------"
 
-    # 1. List all databases
-    # INTENT:
-    #   Verify that the bootstrap phase successfully created the expected databases
-    #   (e.g., langflow_db) before attempting strictly typed operations.
-    echo "Available Databases:"
+    # Diagnostics: List databases directly to ensure DB is up
     kubectl exec $client_pod -- bash -c "
         export PGPASSWORD=\"\$POSTGRES_PASSWORD\";
         psql -U \"\$POSTGRES_USER\" -d postgres -c '\l'
     "
 
-    # 2. List tables in the target database
     echo "-----------------------------------------------"
-    echo "Tables in $db_name:"
-    kubectl exec $client_pod -- bash -c "
-        export PGPASSWORD=\"\$POSTGRES_PASSWORD\";
-        psql -U \"\$POSTGRES_USER\" -d $db_name -c '\dt' || echo '⚠️  Database $db_name does not exist or is not accessible.'
-    "
+    echo "1️⃣  Writing via PGBOUNCER (Service: $pgbouncer_host, Port: $pgbouncer_port)"
 
-    echo "-----------------------------------------------"
-    echo "1️⃣  Writing to POSTGRES COORDINATOR (Port: 5432)"
-    # TRADE-OFF:
-    #   Directly accessing the Coordinator (Port 5432) bypasses any potential PgBouncer
-    #   or load balancer layer. This ensures we are testing the storage engine,
-    #   not the middleware.
+    # CRITICAL: -h points to the PgBouncer Service (6432), not localhost.
+    # This validates that PgBouncer is accepting connections and routing them correctly.
     kubectl exec $client_pod -- bash -c "
         export PGPASSWORD=\"\$POSTGRES_PASSWORD\";
-        psql -U \"\$POSTGRES_USER\" -h localhost -p 5432 -d $db_name -c \"
+        psql -U \"\$POSTGRES_USER\" -h $pgbouncer_host -p $pgbouncer_port -d $db_name -c \"
             CREATE TABLE IF NOT EXISTS $test_table (id SERIAL PRIMARY KEY, val TEXT);
             INSERT INTO $test_table (val) VALUES ('$test_value');
         \"
     "
-    if [ $? -eq 0 ]; then echo "✅ Write success."; else echo "❌ Write failed."; return 1; fi
+    if [ $? -eq 0 ]; then
+        echo "✅ Write via PgBouncer success."
+    else
+        echo "❌ Write failed via PgBouncer! (Is the service reachable? Check userlist.txt)"
+        return 1
+    fi
 
     echo "-----------------------------------------------"
     echo "2️⃣  Reading directly from POSTGRES (Localhost, Port: 5432)"
-    # RISK:
-    #   This check implies strong consistency. If we were testing a read-replica here,
-    #   we might encounter replication lag. Since this is the Coordinator, immediate
-    #   consistency is expected.
+
+    # VERIFICATION: Read back directly from the DB storage (localhost:5432).
+    # Finding the data here proves that PgBouncer successfully committed the transaction.
     local read_val=$(kubectl exec $client_pod -- bash -c "
         export PGPASSWORD=\"\$POSTGRES_PASSWORD\";
         psql -U \"\$POSTGRES_USER\" -h localhost -p 5432 -d $db_name -tA -c \"
@@ -77,8 +71,8 @@ test_db() {
         \"
     ")
 
-    echo "   -> Wrote: $test_value"
-    echo "   -> Read:  $read_val"
+    echo "   -> Wrote (via PgBouncer): $test_value"
+    echo "   -> Read  (via Postgres):  $read_val"
 
     if [ "$read_val" == "$test_value" ]; then
         echo "✅ Data consistency verified!"
@@ -88,13 +82,11 @@ test_db() {
     fi
 
     echo "-----------------------------------------------"
-    echo "🧹 Cleaning up test table..."
-    # WHY:
-    #   Leaving test tables pollutes the schema and can confuse future manual debugging.
-    #   We drop the specific ephemeral table created for this run.
+    echo "🧹 Cleaning up test table (via PgBouncer)..."
+    # Cleanup via PgBouncer to verify permission stability
     kubectl exec $client_pod -- bash -c "
         export PGPASSWORD=\"\$POSTGRES_PASSWORD\";
-        psql -U \"\$POSTGRES_USER\" -h localhost -p 5432 -d $db_name -c \"DROP TABLE $test_table;\"
+        psql -U \"\$POSTGRES_USER\" -h $pgbouncer_host -p $pgbouncer_port -d $db_name -c \"DROP TABLE $test_table;\"
     " > /dev/null
     echo "✅ Cleanup done."
 

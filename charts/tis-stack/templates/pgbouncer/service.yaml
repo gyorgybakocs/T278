@@ -10,8 +10,8 @@ spec:
   selector:
     app.kubernetes.io/component: pgbouncer
   ports:
-    - protocol: TCP
-      port: {{ .Values.pgbouncer.service.port }}
-      targetPort: {{ .Values.pgbouncer.config.listenPort }}
+    - port: {{ .Values.pgbouncer.service.port }}
+      targetPort: {{ .Values.pgbouncer.service.port }}
+      protocol: TCP
       name: pgbouncer
 {{- end }}

@@ -14,16 +14,19 @@ spec:
           image: gcr.io/kaniko-project/executor:latest
           args:
             - --force
-            - --dockerfile=docker/pgbouncer/Dockerfile
             - --context=/workspace
+            - --dockerfile=docker/pgbouncer/Dockerfile
             - --destination=$(REGISTRY_URL)/$(PGBOUNCER_BUILT_IMAGE)
             - --build-arg=PGBOUNCER_PORT=$(PGBOUNCER_PORT)
-            - --build-arg=IMAGE_FROM_REGISTRY=$(REGISTRY_URL)/$(PGBOUNCER_BASE_IMAGE)
+            - --build-arg=IMAGE_FROM_REGISTRY=$(REGISTRY_URL)/$(PGBOUNCER_BUILT_IMAGE)
             - --insecure
             - --skip-tls-verify
           securityContext:
             runAsUser: 0
             privileged: true
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
           workingDir: /workspace
           env:
             - name: PGBOUNCER_BUILT_IMAGE

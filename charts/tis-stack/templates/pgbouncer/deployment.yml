@@ -45,7 +45,7 @@ spec:
             # CONNECTIVITY:
             #   Points PgBouncer to the Postgres Coordinator Service.
             - name: DB_HOST
-              value: "{{ include "tis-stack.fullname" . }}-postgres-coordinator"
+              value: "postgres-coordinator"
 
             - name: DB_PORT
               value: "5432"
