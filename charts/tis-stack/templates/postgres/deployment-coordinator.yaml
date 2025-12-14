@@ -22,6 +22,10 @@ spec:
         {{- include "tis-stack.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: postgres-coordinator
     spec:
+      # STABILITY:
+      #   Give Postgres enough time to checkpoint and shutdown cleanly
+      #   before SIGKILL is sent by Kubernetes.
+      terminationGracePeriodSeconds: 60
       securityContext:
         {{- toYaml .Values.postgres.podSecurityContext | nindent 8 }}
 

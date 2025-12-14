@@ -62,17 +62,22 @@ test_citus() {
 
     echo "-----------------------------------------------"
     echo "3️⃣  Checking Active Workers"
-    # CLUSTER HEALTH:
-    #   'master_get_active_worker_nodes()' is the source of truth.
-    #   It confirms that the workers are not just defined in metadata, but are actually REACHABLE and healthy.
-    local worker_count=$(run_sql "SELECT count(*) FROM master_get_active_worker_nodes();")
 
-    echo "   -> Active Workers found: $worker_count"
+    # DYNAMIC DISCOVERY: Get expected worker count from K8s via LABELS
+    EXPECTED_WORKERS=$(kubectl get statefulset -l "app.kubernetes.io/component=postgres-worker" -o jsonpath='{.items[0].spec.replicas}' 2>/dev/null)
 
-    if [ "$worker_count" -gt 0 ]; then
-        echo "✅ OK: Workers are registered."
+    if [ -z "$EXPECTED_WORKERS" ]; then EXPECTED_WORKERS=3; fi
+
+    # Count registered workers (SQL Table Check)
+    local worker_count=$(run_sql "SELECT count(*) FROM pg_dist_node WHERE noderole = 'primary';")
+    if [ -z "$worker_count" ]; then worker_count=0; fi
+
+    echo "   -> Active Workers found: $worker_count (Expected from K8s: $EXPECTED_WORKERS)"
+
+    if [ "$worker_count" -ge "$EXPECTED_WORKERS" ]; then
+        echo "✅ OK: All expected workers are registered."
     else
-        echo "❌ FAILED: No workers found! Cluster is not formed."
+        echo "❌ FAILED: Mismatch in worker count! Found: $worker_count, Expected: $EXPECTED_WORKERS"
         return 1
     fi
 

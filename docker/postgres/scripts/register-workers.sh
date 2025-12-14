@@ -115,11 +115,27 @@ for (( i=0; i<WORKER_REPLICAS; i++ )); do
 
   # 3) Register
   #   ACTION: Calls the Citus UDF to add the worker to the metadata.
-  log "INFO: Registering node..."
-  if ! psql -h localhost -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=1 \
-    -c "SELECT master_add_node('${WORKER_HOST}', 5432);" >/dev/null 2>&1; then
-    log "WARN: master_add_node failed for $WORKER_HOST -> continue."
-    continue
+  #   FIX: Added retry logic because master_add_node can fail if OTHER nodes are restarting/unreachable (DNS).
+  log "INFO: Registering node $WORKER_HOST..."
+
+  MAX_RETRIES=10
+  RETRY_DELAY=3
+  REGISTERED=false
+
+  for (( r=1; r<=MAX_RETRIES; r++ )); do
+      if psql -h localhost -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=1 \
+        -c "SELECT master_add_node('${WORKER_HOST}', 5432);" >/dev/null 2>&1; then
+        log "INFO: ✅ Successfully registered $WORKER_HOST."
+        REGISTERED=true
+        break
+      else
+        log "WARN: ⚠️ master_add_node failed for $WORKER_HOST (Attempt $r/$MAX_RETRIES). Retrying in ${RETRY_DELAY}s..."
+        sleep $RETRY_DELAY
+      fi
+  done
+
+  if [ "$REGISTERED" = false ]; then
+      log "ERROR: ❌ Failed to register $WORKER_HOST after $MAX_RETRIES attempts. Skipping."
   fi
 
   log "INFO: Registered."

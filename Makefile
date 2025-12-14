@@ -199,6 +199,9 @@ helm-template:
 # ----------------------------------- BUILD JOBS ----------------------------------
 # ---------------------------------------------------------------------------------
 build-k8s:
+	@echo "----------------- Syncing code to Minikube -------------------"
+	docker cp . minikube:/workspace
+
 	@echo "----------------- Build jobs for Kubernetes -------------------"
 	@for base_name in $(ROLLING_DEPLOYMENTS); do \
 		name=$$(echo $$base_name | tr 'A-Z' 'a-z'); \

@@ -1,4 +1,20 @@
 apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: registry-pvc
+  namespace: default
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      # STORAGE CAPACITY:
+      #   We set a static size request required by the Kubernetes API.
+      #   20Gi is allocated to ensure enough space for multiple Docker image layers
+      #   during local development without frequent garbage collection.
+      storage: 20Gi
+---
+apiVersion: v1
 kind: Service
 metadata:
   name: registry
@@ -54,8 +70,9 @@ spec:
       volumes:
         - name: registry-storage
           # STORAGE:
-          #   Using 'emptyDir' means the images are stored in the Pod's ephemeral storage.
-          #   RISK: If the registry pod restarts, all built images are LOST.
-          #   This is acceptable for a local dev/test environment (Minikube), but
-          #   in production, this should be S3 or a PVC.
-          emptyDir: {}
+          #   Using 'PersistentVolumeClaim' ensures data persistence.
+          #   WHY: Unlike 'emptyDir', this prevents the loss of built images
+          #   if the registry pod crashes or restarts.
+          #   Crucial for stability in Minikube to avoid "ImagePullBackOff" loops.
+          persistentVolumeClaim:
+            claimName: registry-pvc
