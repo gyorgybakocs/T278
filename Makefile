@@ -287,3 +287,37 @@ port-forward-services:
 # ---------------------------------------------------------------------------------
 
 k8s: bootstrap deploy-app calculate-resources test-system
+
+init-langflow-users:
+	@echo "----------------- Executing init scripts inside the Langflow container -------------------"
+	@LANGFLOW_POD=$$(kubectl get pods -l app=langflow -o jsonpath='{.items[0].metadata.name}'); \
+	if [ -z "$$LANGFLOW_POD" ]; then echo "X Langflow pod not found!"; exit 1; fi; \
+	\
+	echo "--- Creating /app/tmp directory inside the pod ---"; \
+	kubectl exec "$${LANGFLOW_POD}" -- mkdir -p /app/tmp; \
+	\
+	echo "--- Running init_service_user.py in pod: $${LANGFLOW_POD} ---"; \
+	kubectl exec "$${LANGFLOW_POD}" -- python /app/init/python/init_service_user.py; \
+	\
+	echo "--- Running init_public_user.py in pod: $${LANGFLOW_POD} ---"; \
+	kubectl exec "$${LANGFLOW_POD}" -- python /app/init/python/init_public_user.py; \
+	\
+	echo "Init scripts finished successfully." \
+
+create-test-flow:
+	@echo "--- Creating test flow for benchmarking ---"
+	@LANGFLOW_POD=$$(kubectl get pods -l app=langflow -o jsonpath='{.items[0].metadata.name}'); \
+	OUTPUT=$$(kubectl exec "$${LANGFLOW_POD}" -- python /app/init/python/init_benchmark_flow.py); \
+	echo "$$OUTPUT"; \
+	\
+	FLOW_ID=$$(echo "$$OUTPUT" | grep 'BENCHMARK_DATA:FLOW_ID=' | cut -d'=' -f2 | tr -d '\r'); \
+	API_KEY=$$(echo "$$OUTPUT" | grep 'BENCHMARK_DATA:API_KEY=' | cut -d'=' -f2 | tr -d '\r'); \
+	\
+	echo "Saving to ConfigMap and Secret..."; \
+	kubectl patch configmap langflow-config --patch "{\"data\":{\"BENCHMARK_FLOW_ID\":\"$$FLOW_ID\"}}"; \
+	kubectl patch secret tis-app-secrets --patch "{\"data\":{\"BENCHMARK_API_KEY\":\"$$(echo -n $$API_KEY | base64)\"}}"; \
+	\
+	echo "Saving to local files for verification..."; \
+	echo "$$FLOW_ID" > .benchmark_flow_id; \
+	echo "$$API_KEY" > .benchmark_api_key; \
+	echo "Test flow created. Flow ID saved to .benchmark_flow_id, API key saved to .benchmark_api_key"

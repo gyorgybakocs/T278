@@ -1,4 +1,4 @@
-{{- if .Values.langflow.enabled -}}
+{{- if and .Values.langflow.enabled .Values.langflow.persistence.enabled (not .Values.global.onlyConfig) -}}
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:

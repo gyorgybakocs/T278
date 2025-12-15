@@ -1,4 +1,4 @@
-{{- if .Values.langflow.enabled -}}
+{{- if and .Values.langflow.enabled (not .Values.global.onlyConfig) -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -111,11 +111,19 @@ spec:
 
       volumes:
         - name: flows-data
+        {{- if .Values.langflow.persistence.enabled }}
           persistentVolumeClaim:
             claimName: {{ include "tis-stack.fullname" . }}-langflow-flows-pvc
+        {{- else }}
+          emptyDir: { }
+        {{- end }}
         - name: logs-data
+        {{- if .Values.langflow.persistence.enabled }}
           persistentVolumeClaim:
             claimName: {{ include "tis-stack.fullname" . }}-langflow-logs-pvc
+        {{- else }}
+          emptyDir: { }
+        {{- end }}
         {{- if .Values.langflow.externalFiles.components.enabled }}
         - name: tis-components
           hostPath:

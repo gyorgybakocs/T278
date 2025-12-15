@@ -1,4 +1,4 @@
-{{- if .Values.langflow.enabled -}}
+{{- if and .Values.langflow.enabled (not .Values.global.onlyConfig) -}}
 apiVersion: v1
 kind: Service
 metadata:

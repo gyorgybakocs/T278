@@ -229,6 +229,7 @@ langflow:
       cpu: "1"
 
   persistence:
+    enabled: true
     flows:
       size: 1Gi
     logs:
